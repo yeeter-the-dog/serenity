@@ -174,6 +174,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     add_compile_options(-Wno-overloaded-virtual)
     add_compile_options(-Wno-user-defined-literals)
+    add_compile_options(-Wno-literal-suffix)
 endif()
 
 add_compile_definitions(DEBUG SANITIZE_PTRS)
