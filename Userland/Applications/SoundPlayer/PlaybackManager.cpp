@@ -128,13 +128,16 @@ void PlaybackManager::load_next_buffer()
     if (m_buffers.size() < 10) {
         for (int i = 0; i < 20 && m_loader->loaded_samples() < m_loader->total_samples(); i++) {
             auto buffer = m_loader->get_more_samples(PLAYBACK_MANAGER_BUFFER_SIZE);
-            if (buffer)
+            if (buffer) {
                 m_buffers.append(buffer);
+            }
         }
     }
 
     if (m_next_ptr < m_buffers.size()) {
         m_next_buffer = m_buffers.at(m_next_ptr++);
+        if (on_load_sample_buffer)
+            on_load_sample_buffer(*m_next_buffer);
     } else {
         m_next_buffer = nullptr;
     }
@@ -163,20 +166,16 @@ void PlaybackManager::next_buffer()
 {
     if (on_update)
         on_update();
-
     if (m_paused)
         return;
 
     remove_dead_buffers();
     if (!m_next_buffer) {
         if (!m_connection->get_remaining_samples() && !m_paused) {
-            dbgln("Exhausted samples :^)");
-            if (m_loop)
-                seek(0);
-            else
-                stop();
+            stop();
+            if (on_finished_playing)
+                on_finished_playing();
         }
-
         return;
     }
 

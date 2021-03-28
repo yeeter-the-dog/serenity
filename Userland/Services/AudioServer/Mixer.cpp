@@ -86,8 +86,8 @@ void Mixer::mix()
 
         active_mix_queues.remove_all_matching([&](auto& entry) { return !entry->client(); });
 
-        Audio::Sample mixed_buffer[1024];
-        auto mixed_buffer_length = (int)(sizeof(mixed_buffer) / sizeof(Audio::Sample));
+        Audio::Frame mixed_buffer[1024];
+        auto mixed_buffer_length = (int)(sizeof(mixed_buffer) / sizeof(Audio::Frame));
 
         // Mix the buffers together into the output
         for (auto& queue : active_mix_queues) {
@@ -98,7 +98,7 @@ void Mixer::mix()
 
             for (int i = 0; i < mixed_buffer_length; ++i) {
                 auto& mixed_sample = mixed_buffer[i];
-                Audio::Sample sample;
+                Audio::Frame sample;
                 if (!queue->get_next_sample(sample))
                     break;
                 mixed_sample += sample;
@@ -134,8 +134,8 @@ void Mixer::mix()
 
 void Mixer::set_main_volume(int volume)
 {
-    if (volume > 100)
-        m_main_volume = 100;
+    if (volume < 0)
+        m_main_volume = 0;
     else
         m_main_volume = volume;
     ClientConnection::for_each([volume](ClientConnection& client) {

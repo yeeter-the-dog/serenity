@@ -29,15 +29,22 @@
 #include <LibCore/DateTime.h>
 #include <LibCore/File.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/Clipboard.h>
 #include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/PNGWriter.h>
+#include <unistd.h>
 
 int main(int argc, char** argv)
 {
     Core::ArgsParser args_parser;
 
     String output_path;
+    bool output_to_clipboard = false;
+    int delay = 0;
+
     args_parser.add_positional_argument(output_path, "Output filename", "output", Core::ArgsParser::Required::No);
+    args_parser.add_option(output_to_clipboard, "Output to clipboard", "clipboard", 'c');
+    args_parser.add_option(delay, "Seconds to wait before taking a screenshot", "delay", 'd', "seconds");
 
     args_parser.parse(argc, argv);
 
@@ -46,12 +53,18 @@ int main(int argc, char** argv)
     }
 
     auto app = GUI::Application::construct(argc, argv);
+    sleep(delay);
     auto response = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::GetScreenBitmap>();
 
     auto* bitmap = response->bitmap().bitmap();
     if (!bitmap) {
         warnln("Failed to grab screenshot");
         return 1;
+    }
+
+    if (output_to_clipboard) {
+        GUI::Clipboard::the().set_bitmap(*bitmap);
+        return 0;
     }
 
     Gfx::PNGWriter writer;
