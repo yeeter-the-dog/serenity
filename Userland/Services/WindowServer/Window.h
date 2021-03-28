@@ -146,6 +146,10 @@ public:
     float opacity() const { return m_opacity; }
     void set_opacity(float);
 
+    void set_hit_testing_enabled(bool value)
+    {
+        m_hit_testing_enabled = value;
+    }
     float alpha_hit_threshold() const { return m_alpha_hit_threshold; }
     void set_alpha_hit_threshold(float threshold)
     {
@@ -201,8 +205,6 @@ public:
     void prepare_dirty_rects();
     void clear_dirty_rects();
     Gfx::DisjointRectSet& dirty_rects() { return m_dirty_rects; }
-
-    virtual void event(Core::Event&) override;
 
     // Only used by WindowType::MenuApplet. Perhaps it could be a Window subclass? I don't know.
     void set_rect_in_menubar(const Gfx::IntRect& rect) { m_rect_in_menubar = rect; }
@@ -304,6 +306,8 @@ public:
     void set_frameless(bool);
     bool is_frameless() const { return m_frameless; }
 
+    bool should_show_menubar() const { return m_should_show_menubar; }
+
     int progress() const { return m_progress; }
     void set_progress(int);
 
@@ -333,6 +337,7 @@ public:
     void set_menubar(MenuBar*);
 
 private:
+    virtual void event(Core::Event&) override;
     void handle_mouse_event(const MouseEvent&);
     void update_menu_item_text(PopupMenuItem item);
     void update_menu_item_enabled(PopupMenuItem item);
@@ -378,6 +383,7 @@ private:
     bool m_invalidated { true };
     bool m_invalidated_all { true };
     bool m_invalidated_frame { true };
+    bool m_hit_testing_enabled { true };
     WindowTileType m_tiled { WindowTileType::None };
     Gfx::IntRect m_untiled_rect;
     bool m_occluded { false };
@@ -404,8 +410,10 @@ private:
     MenuItem* m_window_menu_minimize_item { nullptr };
     MenuItem* m_window_menu_maximize_item { nullptr };
     MenuItem* m_window_menu_close_item { nullptr };
+    MenuItem* m_window_menu_menubar_visibility_item { nullptr };
     int m_minimize_animation_step { -1 };
     int m_progress { -1 };
+    bool m_should_show_menubar { true };
 };
 
 }
