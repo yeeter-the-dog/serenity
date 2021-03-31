@@ -475,15 +475,20 @@ OwnPtr<Messages::WindowServer::GetWindowMinimumSizeResponse> ClientConnection::h
     return make<Messages::WindowServer::GetWindowMinimumSizeResponse>(it->value->minimum_size());
 }
 
-OwnPtr<Messages::WindowServer::GetWindowRectInMenubarResponse> ClientConnection::handle(const Messages::WindowServer::GetWindowRectInMenubar& message)
+OwnPtr<Messages::WindowServer::GetAppletRectOnScreenResponse> ClientConnection::handle(const Messages::WindowServer::GetAppletRectOnScreen& message)
 {
     int window_id = message.window_id();
     auto it = m_windows.find(window_id);
     if (it == m_windows.end()) {
-        did_misbehave("GetWindowRectInMenubar: Bad window ID");
+        did_misbehave("GetAppletRectOnScreen: Bad window ID");
         return {};
     }
-    return make<Messages::WindowServer::GetWindowRectInMenubarResponse>(it->value->rect_in_menubar());
+
+    Gfx::IntRect applet_area_rect;
+    if (auto* applet_area_window = AppletManager::the().window())
+        applet_area_rect = applet_area_window->rect();
+
+    return make<Messages::WindowServer::GetAppletRectOnScreenResponse>(it->value->rect_in_applet_area().translated(applet_area_rect.location()));
 }
 
 Window* ClientConnection::window_from_id(i32 window_id)
@@ -715,6 +720,12 @@ OwnPtr<Messages::WindowServer::SetWindowAlphaHitThresholdResponse> ClientConnect
     }
     it->value->set_alpha_hit_threshold(message.threshold());
     return make<Messages::WindowServer::SetWindowAlphaHitThresholdResponse>();
+}
+
+OwnPtr<Messages::WindowServer::WM_SetAppletAreaPositionResponse> ClientConnection::handle(const Messages::WindowServer::WM_SetAppletAreaPosition& message)
+{
+    AppletManager::the().set_position(message.position());
+    return make<Messages::WindowServer::WM_SetAppletAreaPositionResponse>();
 }
 
 void ClientConnection::handle(const Messages::WindowServer::WM_SetActiveWindow& message)
