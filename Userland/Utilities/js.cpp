@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
+ * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,6 +47,7 @@
 #include <LibJS/Runtime/NumberObject.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/PrimitiveString.h>
+#include <LibJS/Runtime/Promise.h>
 #include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/ScriptFunction.h>
@@ -272,6 +273,32 @@ static void print_proxy_object(const JS::Object& object, HashTable<JS::Object*>&
     print_value(&proxy_object.handler(), seen_objects);
 }
 
+static void print_promise(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
+{
+    auto& promise = static_cast<const JS::Promise&>(object);
+    print_type("Promise");
+    switch (promise.state()) {
+    case JS::Promise::State::Pending:
+        out("\n  state: ");
+        out("\033[36;1mPending\033[0m");
+        break;
+    case JS::Promise::State::Fulfilled:
+        out("\n  state: ");
+        out("\033[32;1mFulfilled\033[0m");
+        out("\n  result: ");
+        print_value(promise.result(), seen_objects);
+        break;
+    case JS::Promise::State::Rejected:
+        out("\n  state: ");
+        out("\033[31;1mRejected\033[0m");
+        out("\n  result: ");
+        print_value(promise.result(), seen_objects);
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
 static void print_array_buffer(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
 {
     auto& array_buffer = static_cast<const JS::ArrayBuffer&>(object);
@@ -368,6 +395,8 @@ static void print_value(JS::Value value, HashTable<JS::Object*>& seen_objects)
             return print_regexp_object(object, seen_objects);
         if (is<JS::ProxyObject>(object))
             return print_proxy_object(object, seen_objects);
+        if (is<JS::Promise>(object))
+            return print_promise(object, seen_objects);
         if (is<JS::ArrayBuffer>(object))
             return print_array_buffer(object, seen_objects);
         if (object.is_typed_array())
@@ -687,6 +716,26 @@ int main(int argc, char** argv)
     bool syntax_highlight = !disable_syntax_highlight;
 
     vm = JS::VM::create();
+    // NOTE: These will print out both warnings when using something like Promise.reject().catch(...) -
+    // which is, as far as I can tell, correct - a promise is created, rejected without handler, and a
+    // handler then attached to it. The Node.js REPL doesn't warn in this case, so it's something we
+    // might want to revisit at a later point and disable warnings for promises created this way.
+    vm->on_promise_unhandled_rejection = [](auto& promise) {
+        // FIXME: Optionally make print_value() to print to stderr
+        out("WARNING: A promise was rejected without any handlers");
+        out(" (result: ");
+        HashTable<JS::Object*> seen_objects;
+        print_value(promise.result(), seen_objects);
+        outln(")");
+    };
+    vm->on_promise_rejection_handled = [](auto& promise) {
+        // FIXME: Optionally make print_value() to print to stderr
+        out("WARNING: A handler was added to an already rejected promise");
+        out(" (result: ");
+        HashTable<JS::Object*> seen_objects;
+        print_value(promise.result(), seen_objects);
+        outln(")");
+    };
     OwnPtr<JS::Interpreter> interpreter;
 
     interrupt_interpreter = [&] {

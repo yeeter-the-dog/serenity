@@ -304,17 +304,13 @@ private:
     }
 
     template<typename Finder>
-    Bucket* lookup_with_hash(unsigned hash, Finder finder, Bucket** usable_bucket_for_writing = nullptr) const
+    Bucket* lookup_with_hash(unsigned hash, Finder finder) const
     {
         if (is_empty())
             return nullptr;
-        size_t bucket_index = hash % m_capacity;
-        for (;;) {
-            auto& bucket = m_buckets[bucket_index];
 
-            if (usable_bucket_for_writing && !*usable_bucket_for_writing && !bucket.used) {
-                *usable_bucket_for_writing = &bucket;
-            }
+        for (;;) {
+            auto& bucket = m_buckets[hash % m_capacity];
 
             if (bucket.used && finder(*bucket.slot()))
                 return &bucket;
@@ -323,7 +319,6 @@ private:
                 return nullptr;
 
             hash = double_hash(hash);
-            bucket_index = hash % m_capacity;
         }
     }
 
@@ -334,28 +329,26 @@ private:
 
     Bucket& lookup_for_writing(const T& value)
     {
-        auto hash = TraitsForT::hash(value);
-        Bucket* usable_bucket_for_writing = nullptr;
-        if (auto* bucket_for_reading = lookup_with_hash(
-                hash,
-                [&value](auto& entry) { return TraitsForT::equals(entry, value); },
-                &usable_bucket_for_writing)) {
-            return *const_cast<Bucket*>(bucket_for_reading);
-        }
-
         if (should_grow())
             rehash(capacity() * 2);
-        else if (usable_bucket_for_writing)
-            return *usable_bucket_for_writing;
 
-        size_t bucket_index = hash % m_capacity;
-
+        auto hash = TraitsForT::hash(value);
+        Bucket* first_empty_bucket = nullptr;
         for (;;) {
-            auto& bucket = m_buckets[bucket_index];
-            if (!bucket.used)
+            auto& bucket = m_buckets[hash % m_capacity];
+
+            if (bucket.used && TraitsForT::equals(*bucket.slot(), value))
                 return bucket;
+
+            if (!bucket.used) {
+                if (!first_empty_bucket)
+                    first_empty_bucket = &bucket;
+
+                if (!bucket.deleted)
+                    return *const_cast<Bucket*>(first_empty_bucket);
+            }
+
             hash = double_hash(hash);
-            bucket_index = hash % m_capacity;
         }
     }
 

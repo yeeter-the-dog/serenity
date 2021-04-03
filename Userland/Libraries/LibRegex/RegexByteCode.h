@@ -334,26 +334,26 @@ public:
     {
 
         // FORKJUMP _ALT
-        // REGEXP ALT1
+        // REGEXP ALT2
         // JUMP  _END
         // LABEL _ALT
-        // REGEXP ALT2
+        // REGEXP ALT1
         // LABEL _END
 
         ByteCode byte_code;
 
         empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
-        empend(left.size() + 2); // Jump to the _ALT label
+        empend(right.size() + 2); // Jump to the _ALT label
 
-        for (auto& op : left)
+        for (auto& op : right)
             append(move(op));
 
         empend(static_cast<ByteCodeValueType>(OpCodeId::Jump));
-        empend(right.size()); // Jump to the _END label
+        empend(left.size()); // Jump to the _END label
 
         // LABEL _ALT = bytecode.size() + 2
 
-        for (auto& op : right)
+        for (auto& op : left)
             append(move(op));
 
         // LABEL _END = alterantive_bytecode.size
@@ -768,7 +768,7 @@ public:
 
 private:
     ALWAYS_INLINE static void compare_char(const MatchInput& input, MatchState& state, u32 ch1, bool inverse, bool& inverse_matched);
-    ALWAYS_INLINE static bool compare_string(const MatchInput& input, MatchState& state, const char* str, size_t length);
+    ALWAYS_INLINE static bool compare_string(const MatchInput& input, MatchState& state, const char* str, size_t length, bool& had_zero_length_match);
     ALWAYS_INLINE static void compare_character_class(const MatchInput& input, MatchState& state, CharClass character_class, u32 ch, bool inverse, bool& inverse_matched);
     ALWAYS_INLINE static void compare_character_range(const MatchInput& input, MatchState& state, u32 from, u32 to, u32 ch, bool inverse, bool& inverse_matched);
 };

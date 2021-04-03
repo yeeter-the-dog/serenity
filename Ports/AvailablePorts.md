@@ -44,6 +44,7 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`libpng`](libpng/)            | libpng                                        | 1.6.37            | https://libpng.org/                                   |
 | [`libpuffy`](libpuffy/)        | libpuffy                                      | 1.0               | https://github.com/ibara/libpuffy                     |
 | [`libtiff`](libtiff/)          | libtiff                                       | 4.2.0             | http://www.libtiff.org/                               |
+| [`libvorbis`](libvorbis/)      | libvorbis                                     | 1.3.7             | https://github.com/xiph/vorbis                        |
 | [`links`](links/)              | Links web browser                             | 2.22              | http://links.twibright.com/                           |
 | [`lua`](lua/)                  | Lua                                           | 5.3.5             | https://www.lua.org/                                  |
 | [`m4`](m4/)                    | GNU M4                                        | 1.4.9             | https://www.gnu.org/software/m4/                      |
@@ -70,6 +71,7 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`quake`](quake/)              | Quake                                         | 0.65              | https://github.com/SerenityOS/SerenityQuake           |
 | [`rsync`](rsync/)              | rsync                                         | 3.1.3             | https://rsync.samba.org/                              |
 | [`SDL2`](SDL2/)                | Simple DirectMedia Layer (SDL2)               |                   | https://github.com/SerenityOS/SDL                     |
+| [`SDL2_image`](SDL2_image/)    | SDL2\_image (Image loading add-on for SDL2)   | 2.0.5             | https://www.libsdl.org/projects/SDL_image/            |
 | [`SDL2_mixer`](SDL2_mixer/)    | SDL2\_mixer (audio mixer add-on for SDL2)     | 2.0.4             | https://www.libsdl.org/projects/SDL_mixer/            |
 | [`SDL2_ttf`](SDL2_ttf/)        | SDL2\_ttf (TrueType Font add-on for SDL2)     | 2.0.15            | https://www.libsdl.org/projects/SDL_ttf/              |
 | [`sed`](sed/)                  | GNU sed                                       | 4.2.1             | https://www.gnu.org/software/sed/                     |
