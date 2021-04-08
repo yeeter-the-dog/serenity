@@ -109,8 +109,8 @@ Vector<GUI::AutocompleteProvider::Entry> ParserAutoComplete::get_suggestions(con
     }
 
     if (is_empty_property(document, *node, position)) {
-        VERIFY(node->is_member_expression());
-        return autocomplete_property(document, (MemberExpression&)(*node), "");
+        VERIFY(node->parent()->is_member_expression());
+        return autocomplete_property(document, (MemberExpression&)(*node->parent()), "");
     }
 
     String partial_text = String::empty();
@@ -146,6 +146,8 @@ Vector<GUI::AutocompleteProvider::Entry> ParserAutoComplete::autocomplete_name(c
             available_names.append(name);
     };
     for (auto& decl : available_declarations) {
+        if (decl.filename() == node.filename() && decl.start().line > node.start().line)
+            continue;
         if (decl.is_variable_or_parameter_declaration()) {
             add_name(((Cpp::VariableOrParameterDeclaration&)decl).m_name);
         }
@@ -201,7 +203,9 @@ bool ParserAutoComplete::is_property(const ASTNode& node) const
 
 bool ParserAutoComplete::is_empty_property(const DocumentData& document, const ASTNode& node, const Position& autocomplete_position) const
 {
-    if (!node.is_member_expression())
+    if (node.parent() == nullptr)
+        return false;
+    if (!node.parent()->is_member_expression())
         return false;
     auto previous_token = document.parser().token_at(autocomplete_position);
     if (!previous_token.has_value())
@@ -215,7 +219,7 @@ String ParserAutoComplete::type_of_property(const DocumentData& document, const 
     auto properties = properties_of_type(document, type_of(document, *parent.m_object));
     for (auto& prop : properties) {
         if (prop.name == identifier.m_name)
-            return prop.type->m_name;
+            return prop.type->m_name->full_name();
     }
     return {};
 }
@@ -228,7 +232,7 @@ String ParserAutoComplete::type_of_variable(const Identifier& identifier) const
             if (decl.is_variable_or_parameter_declaration()) {
                 auto& var_or_param = (VariableOrParameterDeclaration&)decl;
                 if (var_or_param.m_name == identifier.m_name) {
-                    return var_or_param.m_type->m_name;
+                    return var_or_param.m_type->m_name->full_name();
                 }
             }
         }
@@ -241,18 +245,25 @@ String ParserAutoComplete::type_of(const DocumentData& document, const Expressio
 {
     if (expression.is_member_expression()) {
         auto& member_expression = (const MemberExpression&)expression;
-        return type_of_property(document, *member_expression.m_property);
+        if (member_expression.m_property->is_identifier())
+            return type_of_property(document, static_cast<const Identifier&>(*member_expression.m_property));
+        return {};
     }
-    if (!expression.is_identifier()) {
+
+    const Identifier* identifier { nullptr };
+    if (expression.is_name()) {
+        identifier = static_cast<const Name&>(expression).m_name.ptr();
+    } else if (expression.is_identifier()) {
+        identifier = &static_cast<const Identifier&>(expression);
+    } else {
+        dbgln("expected identifier or name, got: {}", expression.class_name());
         VERIFY_NOT_REACHED(); // TODO
     }
+    VERIFY(identifier);
+    if (is_property(*identifier))
+        return type_of_property(document, *identifier);
 
-    auto& identifier = (const Identifier&)expression;
-
-    if (is_property(identifier))
-        return type_of_property(document, identifier);
-
-    return type_of_variable(identifier);
+    return type_of_variable(*identifier);
 }
 
 Vector<ParserAutoComplete::PropertyInfo> ParserAutoComplete::properties_of_type(const DocumentData& document, const String& type) const
@@ -377,29 +388,69 @@ Optional<GUI::AutocompleteProvider::ProjectLocation> ParserAutoComplete::find_pr
     return {};
 }
 
+struct TargetDeclaration {
+    enum Type {
+        Variable,
+        Type,
+        Function,
+        Property
+    } type;
+    String name;
+};
+
+static Optional<TargetDeclaration> get_target_declaration(const ASTNode& node)
+{
+    if (!node.is_identifier()) {
+        dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "node is not an identifier");
+        return {};
+    }
+
+    String name = static_cast<const Identifier&>(node).m_name;
+
+    if ((node.parent() && node.parent()->is_function_call()) || (node.parent()->is_name() && node.parent()->parent() && node.parent()->parent()->is_function_call())) {
+        return TargetDeclaration { TargetDeclaration::Type::Function, name };
+    }
+
+    if ((node.parent() && node.parent()->is_type()) || (node.parent()->is_name() && node.parent()->parent() && node.parent()->parent()->is_type()))
+        return TargetDeclaration { TargetDeclaration::Type::Type, name };
+
+    if ((node.parent() && node.parent()->is_member_expression()))
+        return TargetDeclaration { TargetDeclaration::Type::Property, name };
+
+    return TargetDeclaration { TargetDeclaration::Type::Variable, name };
+}
+
 RefPtr<Declaration> ParserAutoComplete::find_declaration_of(const DocumentData& document_data, const ASTNode& node) const
 {
-    dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "find_declaration_of: {}", document_data.parser().text_of_node(node));
+    dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "find_declaration_of: {} ({})", document_data.parser().text_of_node(node), node.class_name());
+    auto target_decl = get_target_declaration(node);
+    if (!target_decl.has_value())
+        return {};
+
     auto declarations = get_available_declarations(document_data, node);
     for (auto& decl : declarations) {
-        if (node.is_identifier() && decl.is_variable_or_parameter_declaration()) {
-            if (((Cpp::VariableOrParameterDeclaration&)decl).m_name == static_cast<const Identifier&>(node).m_name)
+        if (decl.is_function() && target_decl.value().type == TargetDeclaration::Function) {
+            if (((Cpp::FunctionDeclaration&)decl).m_name == target_decl.value().name)
                 return decl;
         }
-        if (node.is_type() && decl.is_struct_or_class()) {
-            if (((Cpp::StructOrClassDeclaration&)decl).m_name == static_cast<const Type&>(node).m_name)
+        if (decl.is_variable_or_parameter_declaration() && target_decl.value().type == TargetDeclaration::Variable) {
+            if (((Cpp::VariableOrParameterDeclaration&)decl).m_name == target_decl.value().name)
                 return decl;
         }
-        if (node.is_function_call() && decl.is_function()) {
-            if (((Cpp::FunctionDeclaration&)decl).m_name == static_cast<const FunctionCall&>(node).m_name)
-                return decl;
-        }
-        if (is_property(node) && decl.is_struct_or_class()) {
+
+        if (decl.is_struct_or_class() && target_decl.value().type == TargetDeclaration::Property) {
+            // TODO: Also check that the type of the struct/class matches (not just the property name)
             for (auto& member : ((Cpp::StructOrClassDeclaration&)decl).m_members) {
                 VERIFY(node.is_identifier());
-                if (member.m_name == ((const Identifier&)node).m_name)
+                if (member.m_name == target_decl.value().name) {
                     return member;
+                }
             }
+        }
+
+        if (decl.is_struct_or_class() && target_decl.value().type == TargetDeclaration::Type) {
+            if (((Cpp::StructOrClassDeclaration&)decl).m_name == target_decl.value().name)
+                return decl;
         }
     }
     return {};

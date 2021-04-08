@@ -204,7 +204,6 @@ void enumerate(Function<void(Address, ID)> callback);
 void enable_interrupt_line(Address);
 void disable_interrupt_line(Address);
 u8 get_interrupt_line(Address);
-void set_interrupt_line(Address, u8);
 void raw_access(Address, u32, size_t, u32);
 u32 get_BAR0(Address);
 u32 get_BAR1(Address);
@@ -227,6 +226,7 @@ PhysicalID get_physical_id(Address address);
 
 class Access;
 class MMIOAccess;
+class WindowedMMIOAccess;
 class IOAccess;
 class MMIOSegment;
 class DeviceController;

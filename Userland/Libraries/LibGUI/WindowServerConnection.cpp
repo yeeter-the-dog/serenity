@@ -252,6 +252,16 @@ void WindowServerConnection::handle(const Messages::WindowClient::MouseWheel& me
         Core::EventLoop::current().post_event(*window, make<MouseEvent>(Event::MouseWheel, message.mouse_position(), message.buttons(), to_gmousebutton(message.button()), message.modifiers(), message.wheel_delta()));
 }
 
+void WindowServerConnection::handle(const Messages::WindowClient::MenuVisibilityDidChange& message)
+{
+    auto* menu = Menu::from_menu_id(message.menu_id());
+    if (!menu) {
+        dbgln("EventLoop received visibility change event for invalid menu ID {}", message.menu_id());
+        return;
+    }
+    menu->visibility_did_change({}, message.visible());
+}
+
 void WindowServerConnection::handle(const Messages::WindowClient::MenuItemActivated& message)
 {
     auto* menu = Menu::from_menu_id(message.menu_id());
@@ -297,6 +307,9 @@ void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowRemov
 void WindowServerConnection::handle(const Messages::WindowClient::ScreenRectChanged& message)
 {
     Desktop::the().did_receive_screen_rect({}, message.rect());
+    Window::for_each_window({}, [message](auto& window) {
+        Core::EventLoop::current().post_event(window, make<ScreenRectChangeEvent>(message.rect()));
+    });
 }
 
 void WindowServerConnection::handle(const Messages::WindowClient::AsyncSetWallpaperFinished&)

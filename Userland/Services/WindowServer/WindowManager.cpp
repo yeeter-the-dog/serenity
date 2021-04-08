@@ -404,7 +404,7 @@ void WindowManager::notify_rect_changed(Window& window, const Gfx::IntRect& old_
 
     tell_wm_listeners_window_rect_changed(window);
 
-    if (window.type() == WindowType::MenuApplet)
+    if (window.type() == WindowType::Applet)
         AppletManager::the().relayout();
 
     MenuManager::the().refresh();
@@ -953,7 +953,7 @@ void WindowManager::process_mouse_event(MouseEvent& event, Window*& hovered_wind
 
     if (MenuManager::the().has_open_menu()
         || hitting_menu_in_window_with_active_menu) {
-        for_each_visible_window_of_type_from_front_to_back(WindowType::MenuApplet, [&](auto& window) {
+        for_each_visible_window_of_type_from_front_to_back(WindowType::Applet, [&](auto& window) {
             if (!window.rect_in_applet_area().contains(event.position()))
                 return IterationDecision::Continue;
             hovered_window = &window;
@@ -1158,7 +1158,7 @@ Gfx::IntRect WindowManager::arena_rect_for_type(WindowType type) const
     case WindowType::WindowSwitcher:
     case WindowType::Taskbar:
     case WindowType::Tooltip:
-    case WindowType::MenuApplet:
+    case WindowType::Applet:
     case WindowType::Notification:
         return Screen::the().rect();
     default:
@@ -1211,7 +1211,7 @@ void WindowManager::event(Core::Event& event)
         }
 
         if (m_active_input_window) {
-            if (key_event.type() == Event::KeyDown && key_event.modifiers() == Mod_Super) {
+            if (key_event.type() == Event::KeyDown && key_event.modifiers() == Mod_Super && m_active_input_window->type() != WindowType::Desktop) {
                 if (key_event.key() == Key_Down) {
                     if (m_active_input_window->is_resizable() && m_active_input_window->is_maximized()) {
                         maximize_windows(*m_active_input_window, false);
@@ -1525,6 +1525,7 @@ bool WindowManager::update_theme(String theme_path, String theme_name)
         return IterationDecision::Continue;
     });
     MenuManager::the().did_change_theme();
+    AppletManager::the().did_change_theme();
     auto wm_config = Core::ConfigFile::open("/etc/WindowServer/WindowServer.ini");
     wm_config->write_entry("Theme", "Name", theme_name);
     wm_config->sync();

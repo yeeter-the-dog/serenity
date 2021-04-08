@@ -26,6 +26,7 @@ set(SOURCES
     CSS/PropertyID.cpp
     CSS/PropertyID.h
     CSS/QuirksModeStyleSheetSource.cpp
+    CSS/Screen.cpp
     CSS/Selector.cpp
     CSS/SelectorEngine.cpp
     CSS/StyleInvalidator.cpp
@@ -53,6 +54,7 @@ set(SOURCES
     DOM/Node.cpp
     DOM/ParentNode.cpp
     DOM/Position.cpp
+    DOM/ProcessingInstruction.cpp
     DOM/ShadowRoot.cpp
     DOM/Text.cpp
     DOM/Text.idl
@@ -64,6 +66,7 @@ set(SOURCES
     HTML/AttributeNames.cpp
     HTML/CanvasRenderingContext2D.cpp
     HTML/EventNames.cpp
+    HTML/FrameHostElement.cpp
     HTML/GlobalEventHandlers.cpp
     HTML/HTMLAnchorElement.cpp
     HTML/HTMLAreaElement.cpp
@@ -163,12 +166,14 @@ set(SOURCES
     Layout/InitialContainingBlockBox.cpp
     Layout/InlineFormattingContext.cpp
     Layout/InlineNode.cpp
+    Layout/Label.cpp
     Layout/LayoutPosition.cpp
     Layout/LineBox.cpp
     Layout/LineBoxFragment.cpp
     Layout/ListItemBox.cpp
     Layout/ListItemMarkerBox.cpp
     Layout/Node.cpp
+    Layout/RadioButton.cpp
     Layout/ReplacedBox.cpp
     Layout/SVGBox.cpp
     Layout/SVGGraphicsBox.cpp
@@ -288,6 +293,7 @@ endfunction()
 
 libweb_js_wrapper(CSS/CSSStyleDeclaration)
 libweb_js_wrapper(CSS/CSSStyleSheet)
+libweb_js_wrapper(CSS/Screen)
 libweb_js_wrapper(CSS/StyleSheet)
 libweb_js_wrapper(CSS/StyleSheetList)
 libweb_js_wrapper(DOM/CharacterData)
@@ -300,6 +306,7 @@ libweb_js_wrapper(DOM/DOMImplementation)
 libweb_js_wrapper(DOM/Element)
 libweb_js_wrapper(DOM/Event)
 libweb_js_wrapper(DOM/EventTarget)
+libweb_js_wrapper(DOM/ProcessingInstruction)
 libweb_js_wrapper(DOM/ShadowRoot)
 libweb_js_wrapper(DOM/Node)
 libweb_js_wrapper(DOM/Range)

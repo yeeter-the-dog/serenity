@@ -36,7 +36,7 @@
 #include <Kernel/DMI.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/BlockDevice.h>
-#include <Kernel/Devices/KeyboardDevice.h>
+#include <Kernel/Devices/HID/HIDManagement.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/FileBackedFileSystem.h>
 #include <Kernel/FileSystem/FileDescription.h>
@@ -418,7 +418,7 @@ static bool procfs$interrupts(InodeIdentifier, KBufferBuilder& builder)
 static bool procfs$keymap(InodeIdentifier, KBufferBuilder& builder)
 {
     JsonObjectSerializer<KBufferBuilder> json { builder };
-    json.add("keymap", KeyboardDevice::the().keymap_name());
+    json.add("keymap", HIDManagement::the().keymap_name());
     json.finish();
     return true;
 }
@@ -817,6 +817,7 @@ static bool procfs$all(InodeIdentifier, KBufferBuilder& builder)
         process_object.add("amount_purgeable_volatile", process.space().amount_purgeable_volatile());
         process_object.add("amount_purgeable_nonvolatile", process.space().amount_purgeable_nonvolatile());
         process_object.add("dumpable", process.is_dumpable());
+        process_object.add("kernel", process.is_kernel_process());
         auto thread_array = process_object.add_array("threads");
         process.for_each_thread([&](const Thread& thread) {
             auto thread_object = thread_array.add_object();

@@ -48,8 +48,9 @@ void Box::paint(PaintContext& context, PaintPhase phase)
     if (phase == PaintPhase::Background && !is_body()) {
         auto background_rect = enclosing_int_rect(padded_rect);
         context.painter().fill_rect(background_rect, computed_values().background_color());
+
         if (background_image() && background_image()->bitmap()) {
-            context.painter().blit_tiled(background_rect, *background_image()->bitmap(), background_image()->bitmap()->rect());
+            paint_background_image(context, *background_image()->bitmap(), computed_values().background_repeat_x(), computed_values().background_repeat_y(), move(background_rect));
         }
     }
 
@@ -81,6 +82,40 @@ void Box::paint(PaintContext& context, PaintPhase phase)
     if (phase == PaintPhase::FocusOutline && dom_node() && dom_node()->is_element() && downcast<DOM::Element>(*dom_node()).is_focused()) {
         context.painter().draw_rect(enclosing_int_rect(absolute_rect()), context.palette().focus_outline());
     }
+}
+
+void Box::paint_background_image(
+    PaintContext& context,
+    const Gfx::Bitmap& background_image,
+    CSS::Repeat background_repeat_x,
+    CSS::Repeat background_repeat_y,
+    Gfx::IntRect background_rect)
+{
+    switch (background_repeat_x) {
+    case CSS::Repeat::Round:
+    case CSS::Repeat::Space:
+        // FIXME: Support 'round' and 'space'. Fall through to 'repeat' since that most closely resembles these.
+    case CSS::Repeat::Repeat:
+        // The background rect is already sized to align with 'repeat'.
+        break;
+    case CSS::Repeat::NoRepeat:
+        background_rect.set_width(background_image.width());
+        break;
+    }
+
+    switch (background_repeat_y) {
+    case CSS::Repeat::Round:
+    case CSS::Repeat::Space:
+        // FIXME: Support 'round' and 'space'. Fall through to 'repeat' since that most closely resembles these.
+    case CSS::Repeat::Repeat:
+        // The background rect is already sized to align with 'repeat'.
+        break;
+    case CSS::Repeat::NoRepeat:
+        background_rect.set_height(background_image.height());
+        break;
+    }
+
+    context.painter().blit_tiled(background_rect, background_image, background_image.rect());
 }
 
 HitTestResult Box::hit_test(const Gfx::IntPoint& position, HitTestType type) const

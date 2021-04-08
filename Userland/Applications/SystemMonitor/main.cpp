@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -49,8 +49,10 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/Painter.h>
+#include <LibGUI/SeparatorWidget.h>
 #include <LibGUI/SortingProxyModel.h>
-#include <LibGUI/Splitter.h>
+#include <LibGUI/StackWidget.h>
+#include <LibGUI/StatusBar.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/ToolBar.h>
@@ -64,11 +66,14 @@
 #include <stdio.h>
 #include <unistd.h>
 
+static NonnullRefPtr<GUI::Window> build_process_window(pid_t);
 static NonnullRefPtr<GUI::Widget> build_file_systems_tab();
 static NonnullRefPtr<GUI::Widget> build_pci_devices_tab();
 static NonnullRefPtr<GUI::Widget> build_devices_tab();
 static NonnullRefPtr<GUI::Widget> build_graphs_tab();
 static NonnullRefPtr<GUI::Widget> build_processors_tab();
+
+static RefPtr<GUI::StatusBar> statusbar;
 
 class UnavailableProcessWidget final : public GUI::Frame {
     C_OBJECT(UnavailableProcessWidget)
@@ -169,20 +174,30 @@ int main(int argc, char** argv)
 
     auto window = GUI::Window::construct();
     window->set_title("System Monitor");
-    window->resize(680, 400);
+    window->resize(560, 430);
 
-    auto& keeper = window->set_main_widget<GUI::Widget>();
-    keeper.set_layout<GUI::VerticalBoxLayout>();
-    keeper.set_fill_with_background_color(true);
-    keeper.layout()->set_margins({ 2, 2, 2, 2 });
+    auto& main_widget = window->set_main_widget<GUI::Widget>();
+    main_widget.set_layout<GUI::VerticalBoxLayout>();
+    main_widget.set_fill_with_background_color(true);
 
-    auto& tabwidget = keeper.add<GUI::TabWidget>();
+    // Add a tasteful separating line between the menu and the main UI.
+    auto& top_line = main_widget.add<GUI::SeparatorWidget>(Gfx::Orientation::Horizontal);
+    top_line.set_fixed_height(2);
 
-    auto process_container_splitter = GUI::VerticalSplitter::construct();
-    tabwidget.add_widget("Processes", process_container_splitter);
-    process_container_splitter->layout()->set_margins({ 4, 4, 4, 4 });
+    auto& tabwidget_container = main_widget.add<GUI::Widget>();
+    tabwidget_container.set_layout<GUI::VerticalBoxLayout>();
+    tabwidget_container.layout()->set_margins({ 4, 0, 4, 4 });
+    auto& tabwidget = tabwidget_container.add<GUI::TabWidget>();
 
-    auto& process_table_container = process_container_splitter->add<GUI::Widget>();
+    statusbar = main_widget.add<GUI::StatusBar>(3);
+
+    auto process_model = ProcessModel::create();
+    process_model->on_state_update = [&](int process_count, int thread_count) {
+        statusbar->set_text(0, String::formatted("Processes: {}", process_count));
+        statusbar->set_text(1, String::formatted("Threads: {}", thread_count));
+    };
+
+    auto& process_table_container = tabwidget.add_tab<GUI::Widget>("Processes");
 
     auto graphs_widget = build_graphs_tab();
     tabwidget.add_widget("Graphs", graphs_widget);
@@ -206,11 +221,22 @@ int main(int argc, char** argv)
     tabwidget.add_widget("Interrupts", interrupts_widget);
 
     process_table_container.set_layout<GUI::VerticalBoxLayout>();
+    process_table_container.layout()->set_margins({ 4, 4, 4, 4 });
     process_table_container.layout()->set_spacing(0);
 
     auto& process_table_view = process_table_container.add<GUI::TableView>();
     process_table_view.set_column_headers_visible(true);
-    process_table_view.set_model(GUI::SortingProxyModel::create(ProcessModel::create()));
+    process_table_view.set_model(GUI::SortingProxyModel::create(process_model));
+    for (auto column = 0; column < ProcessModel::Column::__Count; ++column)
+        process_table_view.set_column_visible(column, false);
+    process_table_view.set_column_visible(ProcessModel::Column::Icon, true);
+    process_table_view.set_column_visible(ProcessModel::Column::PID, true);
+    process_table_view.set_column_visible(ProcessModel::Column::Name, true);
+    process_table_view.set_column_visible(ProcessModel::Column::CPU, true);
+    process_table_view.set_column_visible(ProcessModel::Column::User, true);
+    process_table_view.set_column_visible(ProcessModel::Column::Virtual, true);
+    process_table_view.set_column_visible(ProcessModel::Column::DirtyPrivate, true);
+
     process_table_view.set_key_column_and_sort_order(ProcessModel::Column::CPU, GUI::SortOrder::Descending);
     process_table_view.model()->update();
 
@@ -228,25 +254,32 @@ int main(int argc, char** argv)
         return pid_index.data().to_i32();
     };
 
-    auto kill_action = GUI::Action::create("Kill process", { Mod_Ctrl, Key_K }, Gfx::Bitmap::load_from_file("/res/icons/16x16/kill.png"), [&](const GUI::Action&) {
-        pid_t pid = selected_id(ProcessModel::Column::PID);
-        if (pid != -1)
-            kill(pid, SIGKILL);
-    });
+    auto kill_action = GUI::Action::create(
+        "Kill process", { Mod_Ctrl, Key_K }, Gfx::Bitmap::load_from_file("/res/icons/16x16/kill.png"), [&](const GUI::Action&) {
+            pid_t pid = selected_id(ProcessModel::Column::PID);
+            if (pid != -1)
+                kill(pid, SIGKILL);
+        },
+        &process_table_view);
 
-    auto stop_action = GUI::Action::create("Stop process", { Mod_Ctrl, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/stop-hand.png"), [&](const GUI::Action&) {
-        pid_t pid = selected_id(ProcessModel::Column::PID);
-        if (pid != -1)
-            kill(pid, SIGSTOP);
-    });
+    auto stop_action = GUI::Action::create(
+        "Stop process", { Mod_Ctrl, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/stop-hand.png"), [&](const GUI::Action&) {
+            pid_t pid = selected_id(ProcessModel::Column::PID);
+            if (pid != -1)
+                kill(pid, SIGSTOP);
+        },
+        &process_table_view);
 
-    auto continue_action = GUI::Action::create("Continue process", { Mod_Ctrl, Key_C }, Gfx::Bitmap::load_from_file("/res/icons/16x16/continue.png"), [&](const GUI::Action&) {
-        pid_t pid = selected_id(ProcessModel::Column::PID);
-        if (pid != -1)
-            kill(pid, SIGCONT);
-    });
+    auto continue_action = GUI::Action::create(
+        "Continue process", { Mod_Ctrl, Key_C }, Gfx::Bitmap::load_from_file("/res/icons/16x16/continue.png"), [&](const GUI::Action&) {
+            pid_t pid = selected_id(ProcessModel::Column::PID);
+            if (pid != -1)
+                kill(pid, SIGCONT);
+        },
+        &process_table_view);
 
-    auto profile_action = GUI::Action::create("Profile process", { Mod_Ctrl, Key_P },
+    auto profile_action = GUI::Action::create(
+        "Profile process", { Mod_Ctrl, Key_P },
         Gfx::Bitmap::load_from_file("/res/icons/16x16/app-profiler.png"), [&](auto&) {
             pid_t pid = selected_id(ProcessModel::Column::PID);
             if (pid != -1) {
@@ -260,9 +293,11 @@ int main(int argc, char** argv)
                         perror("disown");
                 }
             }
-        });
+        },
+        &process_table_view);
 
-    auto inspect_action = GUI::Action::create("Inspect process", { Mod_Ctrl, Key_I },
+    auto inspect_action = GUI::Action::create(
+        "Inspect process", { Mod_Ctrl, Key_I },
         Gfx::Bitmap::load_from_file("/res/icons/16x16/app-inspector.png"), [&](auto&) {
             pid_t pid = selected_id(ProcessModel::Column::PID);
             if (pid != -1) {
@@ -276,21 +311,37 @@ int main(int argc, char** argv)
                         perror("disown");
                 }
             }
-        });
+        },
+        &process_table_view);
+
+    HashMap<pid_t, NonnullRefPtr<GUI::Window>> process_windows;
+
+    auto process_properties_action = GUI::CommonActions::make_properties_action(
+        [&](auto&) {
+            auto pid = selected_id(ProcessModel::Column::PID);
+
+            RefPtr<GUI::Window> process_window;
+            auto it = process_windows.find(pid);
+            if (it == process_windows.end()) {
+                process_window = build_process_window(pid);
+                process_window->on_close_request = [pid, &process_windows] {
+                    process_windows.remove(pid);
+                    return GUI::Window::CloseRequestDecision::Close;
+                };
+                process_windows.set(pid, *process_window);
+            } else {
+                process_window = it->value;
+            }
+            process_window->show();
+            process_window->move_to_front();
+        },
+        &process_table_view);
 
     auto menubar = GUI::MenuBar::construct();
-    auto& app_menu = menubar->add_menu("File");
+    auto& app_menu = menubar->add_menu("&File");
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
     }));
-
-    auto& process_menu = menubar->add_menu("Process");
-    process_menu.add_action(kill_action);
-    process_menu.add_action(stop_action);
-    process_menu.add_action(continue_action);
-    process_menu.add_separator();
-    process_menu.add_action(profile_action);
-    process_menu.add_action(inspect_action);
 
     auto process_context_menu = GUI::Menu::construct();
     process_context_menu->add_action(kill_action);
@@ -299,11 +350,13 @@ int main(int argc, char** argv)
     process_context_menu->add_separator();
     process_context_menu->add_action(profile_action);
     process_context_menu->add_action(inspect_action);
+    process_context_menu->add_separator();
+    process_context_menu->add_action(process_properties_action);
     process_table_view.on_context_menu_request = [&]([[maybe_unused]] const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
-        process_context_menu->popup(event.screen_position());
+        process_context_menu->popup(event.screen_position(), process_properties_action);
     };
 
-    auto& frequency_menu = menubar->add_menu("Frequency");
+    auto& frequency_menu = menubar->add_menu("F&requency");
     GUI::ActionGroup frequency_action_group;
     frequency_action_group.set_exclusive(true);
 
@@ -320,47 +373,20 @@ int main(int argc, char** argv)
     make_frequency_action("3 sec", 3000, true);
     make_frequency_action("5 sec", 5000);
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("System Monitor", app_icon, window));
 
     window->set_menubar(move(menubar));
 
-    auto& process_tab_unused_widget = process_container_splitter->add<UnavailableProcessWidget>("No process selected");
-    process_tab_unused_widget.set_visible(true);
-
-    auto& process_tab_widget = process_container_splitter->add<GUI::TabWidget>();
-    process_tab_widget.set_tab_position(GUI::TabWidget::TabPosition::Bottom);
-    process_tab_widget.set_visible(false);
-
-    auto& memory_map_widget = process_tab_widget.add_tab<ProcessMemoryMapWidget>("Memory map");
-    auto& open_files_widget = process_tab_widget.add_tab<ProcessFileDescriptorMapWidget>("Open files");
-    auto& unveiled_paths_widget = process_tab_widget.add_tab<ProcessUnveiledPathsWidget>("Unveiled paths");
-    auto& stack_widget = process_tab_widget.add_tab<ThreadStackWidget>("Stack");
-
-    process_table_view.on_selection = [&](auto&) {
-        auto pid = selected_id(ProcessModel::Column::PID);
-        auto tid = selected_id(ProcessModel::Column::TID);
-        if (!can_access_pid(pid)) {
-            process_tab_widget.set_visible(false);
-            process_tab_unused_widget.set_text("Process cannot be accessed");
-            process_tab_unused_widget.set_visible(true);
-            return;
-        }
-
-        process_tab_widget.set_visible(true);
-        process_tab_unused_widget.set_visible(false);
-        open_files_widget.set_pid(pid);
-        stack_widget.set_ids(pid, tid);
-        memory_map_widget.set_pid(pid);
-        unveiled_paths_widget.set_pid(pid);
+    process_table_view.on_activation = [&](auto&) {
+        process_properties_action->activate();
     };
 
     window->show();
-
     window->set_icon(app_icon.bitmap_for_size(16));
 
     if (args_tab_view == "processes")
-        tabwidget.set_active_widget(process_container_splitter);
+        tabwidget.set_active_widget(&process_table_container);
     else if (args_tab_view == "graphs")
         tabwidget.set_active_widget(graphs_widget);
     else if (args_tab_view == "fs")
@@ -396,6 +422,38 @@ public:
         painter.draw_rect(rect, Color::Black);
     }
 };
+
+NonnullRefPtr<GUI::Window> build_process_window(pid_t pid)
+{
+    auto window = GUI::Window::construct();
+    window->resize(480, 360);
+    window->set_title(String::formatted("PID {} - SystemMonitor", pid));
+
+    auto& main_widget = window->set_main_widget<GUI::Widget>();
+    main_widget.set_fill_with_background_color(true);
+    main_widget.set_layout<GUI::VerticalBoxLayout>();
+
+    auto& widget_stack = main_widget.add<GUI::StackWidget>();
+    auto& unavailable_process_widget = widget_stack.add<UnavailableProcessWidget>(String::formatted("Unable to access PID {}", pid));
+
+    auto& process_tab_widget = widget_stack.add<GUI::TabWidget>();
+    auto& memory_map_widget = process_tab_widget.add_tab<ProcessMemoryMapWidget>("Memory map");
+    auto& open_files_widget = process_tab_widget.add_tab<ProcessFileDescriptorMapWidget>("Open files");
+    auto& unveiled_paths_widget = process_tab_widget.add_tab<ProcessUnveiledPathsWidget>("Unveiled paths");
+    auto& thread_stack_widget = process_tab_widget.add_tab<ThreadStackWidget>("Stack");
+
+    open_files_widget.set_pid(pid);
+    thread_stack_widget.set_ids(pid, pid);
+    memory_map_widget.set_pid(pid);
+    unveiled_paths_widget.set_pid(pid);
+
+    if (can_access_pid(pid))
+        widget_stack.set_active_widget(&process_tab_widget);
+    else
+        widget_stack.set_active_widget(&unavailable_process_widget);
+
+    return window;
+}
 
 NonnullRefPtr<GUI::Widget> build_file_systems_tab()
 {
@@ -569,68 +627,71 @@ NonnullRefPtr<GUI::Widget> build_devices_tab()
 
 NonnullRefPtr<GUI::Widget> build_graphs_tab()
 {
-    auto graphs_container = GUI::LazyWidget::construct();
+    auto graphs_container = GUI::Widget::construct();
 
-    graphs_container->on_first_show = [](GUI::LazyWidget& self) {
-        self.set_fill_with_background_color(true);
-        self.set_background_role(ColorRole::Button);
-        self.set_layout<GUI::VerticalBoxLayout>();
-        self.layout()->set_margins({ 4, 4, 4, 4 });
+    graphs_container->set_fill_with_background_color(true);
+    graphs_container->set_background_role(ColorRole::Button);
+    graphs_container->set_layout<GUI::VerticalBoxLayout>();
+    graphs_container->layout()->set_margins({ 4, 4, 4, 4 });
 
-        auto& cpu_graph_group_box = self.add<GUI::GroupBox>("CPU usage");
-        cpu_graph_group_box.set_layout<GUI::HorizontalBoxLayout>();
-        cpu_graph_group_box.layout()->set_margins({ 6, 16, 6, 6 });
-        cpu_graph_group_box.set_fixed_height(120);
-        Vector<GraphWidget*> cpu_graphs;
-        for (size_t i = 0; i < ProcessModel::the().cpus().size(); i++) {
-            auto& cpu_graph = cpu_graph_group_box.add<GraphWidget>();
-            cpu_graph.set_max(100);
-            cpu_graph.set_value_format(0, {
-                                              .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
-                                              .text_formatter = [](int value) {
-                                                  return String::formatted("Total: {}%", value);
-                                              },
-                                          });
-            cpu_graph.set_value_format(1, {
-                                              .graph_color_role = ColorRole::SyntaxPreprocessorValue,
-                                              .text_formatter = [](int value) {
-                                                  return String::formatted("Kernel: {}%", value);
-                                              },
-                                          });
-            cpu_graphs.append(&cpu_graph);
+    auto& cpu_graph_group_box = graphs_container->add<GUI::GroupBox>("CPU usage");
+    cpu_graph_group_box.set_layout<GUI::HorizontalBoxLayout>();
+    cpu_graph_group_box.layout()->set_margins({ 6, 16, 6, 6 });
+    cpu_graph_group_box.set_fixed_height(120);
+    Vector<GraphWidget*> cpu_graphs;
+    for (size_t i = 0; i < ProcessModel::the().cpus().size(); i++) {
+        auto& cpu_graph = cpu_graph_group_box.add<GraphWidget>();
+        cpu_graph.set_max(100);
+        cpu_graph.set_value_format(0, {
+                                          .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
+                                          .text_formatter = [](int value) {
+                                              return String::formatted("Total: {}%", value);
+                                          },
+                                      });
+        cpu_graph.set_value_format(1, {
+                                          .graph_color_role = ColorRole::SyntaxPreprocessorValue,
+                                          .text_formatter = [](int value) {
+                                              return String::formatted("Kernel: {}%", value);
+                                          },
+                                      });
+        cpu_graphs.append(&cpu_graph);
+    }
+    ProcessModel::the().on_cpu_info_change = [cpu_graphs](const NonnullOwnPtrVector<ProcessModel::CpuInfo>& cpus) {
+        float sum_cpu = 0;
+        for (size_t i = 0; i < cpus.size(); ++i) {
+            cpu_graphs[i]->add_value({ (int)cpus[i].total_cpu_percent, (int)cpus[i].total_cpu_percent_kernel });
+            sum_cpu += cpus[i].total_cpu_percent;
         }
-        ProcessModel::the().on_cpu_info_change = [cpu_graphs](const NonnullOwnPtrVector<ProcessModel::CpuInfo>& cpus) {
-            for (size_t i = 0; i < cpus.size(); i++)
-                cpu_graphs[i]->add_value({ (int)cpus[i].total_cpu_percent, (int)cpus[i].total_cpu_percent_kernel });
-        };
-
-        auto& memory_graph_group_box = self.add<GUI::GroupBox>("Memory usage");
-        memory_graph_group_box.set_layout<GUI::VerticalBoxLayout>();
-        memory_graph_group_box.layout()->set_margins({ 6, 16, 6, 6 });
-        memory_graph_group_box.set_fixed_height(120);
-        auto& memory_graph = memory_graph_group_box.add<GraphWidget>();
-        memory_graph.set_stack_values(true);
-        memory_graph.set_value_format(0, {
-                                             .graph_color_role = ColorRole::SyntaxComment,
-                                             .text_formatter = [&memory_graph](int value) {
-                                                 return String::formatted("Committed: {} KiB", value);
-                                             },
-                                         });
-        memory_graph.set_value_format(1, {
-                                             .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
-                                             .text_formatter = [&memory_graph](int value) {
-                                                 return String::formatted("Allocated: {} KiB", value);
-                                             },
-                                         });
-        memory_graph.set_value_format(2, {
-                                             .graph_color_role = ColorRole::SyntaxPreprocessorValue,
-                                             .text_formatter = [&memory_graph](int value) {
-                                                 return String::formatted("Kernel heap: {} KiB", value);
-                                             },
-                                         });
-
-        self.add<MemoryStatsWidget>(memory_graph);
+        float cpu_usage = sum_cpu / (float)cpus.size();
+        statusbar->set_text(2, String::formatted("CPU usage: {}%", (int)roundf(cpu_usage)));
     };
+
+    auto& memory_graph_group_box = graphs_container->add<GUI::GroupBox>("Memory usage");
+    memory_graph_group_box.set_layout<GUI::VerticalBoxLayout>();
+    memory_graph_group_box.layout()->set_margins({ 6, 16, 6, 6 });
+    memory_graph_group_box.set_fixed_height(120);
+    auto& memory_graph = memory_graph_group_box.add<GraphWidget>();
+    memory_graph.set_stack_values(true);
+    memory_graph.set_value_format(0, {
+                                         .graph_color_role = ColorRole::SyntaxComment,
+                                         .text_formatter = [&memory_graph](int value) {
+                                             return String::formatted("Committed: {} KiB", value);
+                                         },
+                                     });
+    memory_graph.set_value_format(1, {
+                                         .graph_color_role = ColorRole::SyntaxPreprocessorStatement,
+                                         .text_formatter = [&memory_graph](int value) {
+                                             return String::formatted("Allocated: {} KiB", value);
+                                         },
+                                     });
+    memory_graph.set_value_format(2, {
+                                         .graph_color_role = ColorRole::SyntaxPreprocessorValue,
+                                         .text_formatter = [&memory_graph](int value) {
+                                             return String::formatted("Kernel heap: {} KiB", value);
+                                         },
+                                     });
+
+    graphs_container->add<MemoryStatsWidget>(memory_graph);
     return graphs_container;
 }
 

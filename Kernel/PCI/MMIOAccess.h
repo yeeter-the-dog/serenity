@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,7 @@
 #include <AK/Types.h>
 #include <Kernel/ACPI/Definitions.h>
 #include <Kernel/PCI/Access.h>
+#include <Kernel/SpinLock.h>
 #include <Kernel/VM/AnonymousVMObject.h>
 #include <Kernel/VM/PhysicalRegion.h>
 #include <Kernel/VM/Region.h>
@@ -40,27 +41,37 @@
 namespace Kernel {
 namespace PCI {
 
-class DeviceConfigurationSpaceMapping {
+#define PCI_MMIO_CONFIG_SPACE_SIZE 4096
+
+class MMIOAccess : public Access {
 public:
-    DeviceConfigurationSpaceMapping(Address, const MMIOSegment&);
-    VirtualAddress vaddr() const { return m_mapped_region->vaddr(); };
-    PhysicalAddress paddr() const { return m_mapped_region->physical_page(0)->paddr(); }
-    const Address& address() const { return m_device_address; };
+    class MMIOSegment {
+    public:
+        MMIOSegment(PhysicalAddress, u8, u8);
+        u8 get_start_bus() const;
+        u8 get_end_bus() const;
+        size_t get_size() const;
+        PhysicalAddress get_paddr() const;
+
+    private:
+        PhysicalAddress m_base_addr;
+        u8 m_start_bus;
+        u8 m_end_bus;
+    };
+    static void initialize(PhysicalAddress mcfg);
 
 private:
-    Address m_device_address;
-    NonnullOwnPtr<Region> m_mapped_region;
-};
-
-class MMIOAccess final : public Access {
-public:
-    static void initialize(PhysicalAddress mcfg);
+    PhysicalAddress determine_memory_mapped_bus_region(u32 segment, u8 bus) const;
+    void map_bus_region(u32, u8);
+    VirtualAddress get_device_configuration_space(Address address);
+    SpinLock<u8> m_access_lock;
+    u8 m_mapped_bus { 0 };
+    OwnPtr<Region> m_mapped_region;
 
 protected:
     explicit MMIOAccess(PhysicalAddress mcfg);
 
-private:
-    virtual const char* access_type() const override { return "MMIO-Access"; };
+    virtual const char* access_type() const override { return "MMIOAccess"; };
     virtual u32 segment_count() const override;
     virtual void enumerate_hardware(Function<void(Address, ID)>) override;
     virtual void write8_field(Address address, u32, u8) override;
@@ -70,13 +81,11 @@ private:
     virtual u16 read16_field(Address address, u32) override;
     virtual u32 read32_field(Address address, u32) override;
 
-    Optional<VirtualAddress> get_device_configuration_space(Address address);
     virtual u8 segment_start_bus(u32) const override;
     virtual u8 segment_end_bus(u32) const override;
 
     PhysicalAddress m_mcfg;
     HashMap<u16, MMIOSegment> m_segments;
-    NonnullOwnPtrVector<DeviceConfigurationSpaceMapping> m_mapped_device_regions;
 };
 
 }

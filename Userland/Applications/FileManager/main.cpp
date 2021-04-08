@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -310,15 +310,14 @@ int run_in_desktop_mode([[maybe_unused]] RefPtr<Core::ConfigFile> config)
         cut_action->set_enabled(!view.selection().is_empty());
     };
 
-    auto properties_action
-        = GUI::Action::create(
-            "Properties", { Mod_Alt, Key_Return }, Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"), [&](const GUI::Action&) {
-                String path = directory_view.path();
-                Vector<String> selected = directory_view.selected_file_paths();
+    auto properties_action = GUI::CommonActions::make_properties_action(
+        [&](auto&) {
+            String path = directory_view.path();
+            Vector<String> selected = directory_view.selected_file_paths();
 
-                show_properties(path, path, selected, directory_view.window());
-            },
-            window);
+            show_properties(path, path, selected, directory_view.window());
+        },
+        window);
 
     auto paste_action = GUI::CommonActions::make_paste_action(
         [&](const GUI::Action&) {
@@ -380,7 +379,7 @@ int run_in_desktop_mode([[maybe_unused]] RefPtr<Core::ConfigFile> config)
                     file_context_menu->add_separator();
 
                 file_context_menu->add_action(properties_action);
-                file_context_menu->popup(event.screen_position());
+                file_context_menu->popup(event.screen_position(), file_context_menu_action_default_action);
             }
         } else {
             desktop_view_context_menu->popup(event.screen_position());
@@ -428,14 +427,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
 
     auto directories_model = GUI::FileSystemModel::create({}, GUI::FileSystemModel::Mode::DirectoriesOnly);
     tree_view.set_model(directories_model);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Icon, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Size, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Owner, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Group, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Permissions, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::ModificationTime, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::Inode, true);
-    tree_view.set_column_hidden(GUI::FileSystemModel::Column::SymlinkTarget, true);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Icon, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Size, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Owner, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Group, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Permissions, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::ModificationTime, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::Inode, false);
+    tree_view.set_column_visible(GUI::FileSystemModel::Column::SymlinkTarget, false);
     bool is_reacting_to_tree_view_selection_change = false;
 
     auto& directory_view = splitter.add<DirectoryView>(DirectoryView::Mode::Normal);
@@ -658,25 +657,24 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
             },
             window);
 
-    auto properties_action
-        = GUI::Action::create(
-            "Properties", { Mod_Alt, Key_Return }, Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"), [&](const GUI::Action& action) {
-                String container_dir_path;
-                String path;
-                Vector<String> selected;
-                if (action.activator() == directory_context_menu || directory_view.active_widget()->is_focused()) {
-                    path = directory_view.path();
-                    container_dir_path = path;
-                    selected = directory_view.selected_file_paths();
-                } else {
-                    path = directories_model->full_path(tree_view.selection().first());
-                    container_dir_path = LexicalPath(path).basename();
-                    selected = tree_view_selected_file_paths();
-                }
+    auto properties_action = GUI::CommonActions::make_properties_action(
+        [&](auto& action) {
+            String container_dir_path;
+            String path;
+            Vector<String> selected;
+            if (action.activator() == directory_context_menu || directory_view.active_widget()->is_focused()) {
+                path = directory_view.path();
+                container_dir_path = path;
+                selected = directory_view.selected_file_paths();
+            } else {
+                path = directories_model->full_path(tree_view.selection().first());
+                container_dir_path = LexicalPath(path).basename();
+                selected = tree_view_selected_file_paths();
+            }
 
-                show_properties(container_dir_path, path, selected, directory_view.window());
-            },
-            window);
+            show_properties(container_dir_path, path, selected, directory_view.window());
+        },
+        window);
 
     auto paste_action = GUI::CommonActions::make_paste_action(
         [&](const GUI::Action& action) {
@@ -755,7 +753,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
 
     auto menubar = GUI::MenuBar::construct();
 
-    auto& app_menu = menubar->add_menu("File");
+    auto& app_menu = menubar->add_menu("&File");
     app_menu.add_action(mkdir_action);
     app_menu.add_action(touch_action);
     app_menu.add_action(copy_action);
@@ -781,7 +779,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     directory_view.set_should_show_dotfiles(show_dotfiles);
     action_show_dotfiles->set_checked(show_dotfiles);
 
-    auto& view_menu = menubar->add_menu("View");
+    auto& view_menu = menubar->add_menu("&View");
     auto& layout_menu = view_menu.add_submenu("Layout");
     layout_menu.add_action(*layout_toolbar_action);
     layout_menu.add_action(*layout_location_action);
@@ -804,14 +802,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         location_textbox.set_focus(true);
     });
 
-    auto& go_menu = menubar->add_menu("Go");
+    auto& go_menu = menubar->add_menu("&Go");
     go_menu.add_action(go_back_action);
     go_menu.add_action(go_forward_action);
     go_menu.add_action(open_parent_directory_action);
     go_menu.add_action(go_home_action);
     go_menu.add_action(go_to_location_action);
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("File Manager", GUI::Icon::default_icon("app-file-manager"), window));
 
     window->set_menubar(menubar);

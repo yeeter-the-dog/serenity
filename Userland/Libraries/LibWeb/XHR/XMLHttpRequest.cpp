@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -124,6 +125,7 @@ DOM::ExceptionOr<void> XMLHttpRequest::set_request_header(const String& header, 
     return {};
 }
 
+// https://xhr.spec.whatwg.org/#dom-xmlhttprequest-open
 DOM::ExceptionOr<void> XMLHttpRequest::open(const String& method, const String& url)
 {
     // FIXME: Let settingsObject be this’s relevant settings object.
@@ -135,10 +137,9 @@ DOM::ExceptionOr<void> XMLHttpRequest::open(const String& method, const String& 
     if (is_forbidden_method(method))
         return DOM::SecurityError::create("Forbidden method, must not be 'CONNECT', 'TRACE', or 'TRACK'");
 
-    String normalized_method = normalize_method(method);
+    auto normalized_method = normalize_method(method);
 
-    // FIXME: Pass in settingObject's API base URL and API URL character encoding.
-    URL parsed_url(url);
+    auto parsed_url = m_window->document().complete_url(url);
     if (!parsed_url.is_valid())
         return DOM::SyntaxError::create("Invalid URL");
 
@@ -228,7 +229,7 @@ DOM::ExceptionOr<void> XMLHttpRequest::send()
         // we need to make ResourceLoader give us more detailed updates than just "done" and "error".
         ResourceLoader::the().load(
             request,
-            [weak_this = make_weak_ptr()](auto data, auto&) {
+            [weak_this = make_weak_ptr()](auto data, auto& response_headers, auto status_code) {
                 if (!weak_this)
                     return;
                 auto& xhr = const_cast<XMLHttpRequest&>(*weak_this);
@@ -243,16 +244,19 @@ DOM::ExceptionOr<void> XMLHttpRequest::send()
                 }
 
                 xhr.m_ready_state = ReadyState::Done;
+                xhr.m_status = status_code.value_or(0);
+                xhr.m_response_headers = move(response_headers);
                 xhr.m_send = false;
                 xhr.dispatch_event(DOM::Event::create(EventNames::readystatechange));
                 xhr.fire_progress_event(EventNames::load, transmitted, length);
                 xhr.fire_progress_event(EventNames::loadend, transmitted, length);
             },
-            [weak_this = make_weak_ptr()](auto& error) {
+            [weak_this = make_weak_ptr()](auto& error, auto status_code) {
                 if (!weak_this)
                     return;
                 dbgln("XHR failed to load: {}", error);
                 const_cast<XMLHttpRequest&>(*weak_this).set_ready_state(ReadyState::Done);
+                const_cast<XMLHttpRequest&>(*weak_this).set_status(status_code.value_or(0));
                 const_cast<XMLHttpRequest&>(*weak_this).dispatch_event(DOM::Event::create(HTML::EventNames::error));
             });
     } else {

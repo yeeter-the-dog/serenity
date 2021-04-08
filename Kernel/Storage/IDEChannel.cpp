@@ -49,6 +49,11 @@ UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(const IDEControlle
     return adopt(*new IDEChannel(controller, io_group, type));
 }
 
+UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(const IDEController& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
+{
+    return adopt(*new IDEChannel(controller, irq, io_group, type));
+}
+
 RefPtr<StorageDevice> IDEChannel::master_device() const
 {
     return m_master;
@@ -59,16 +64,9 @@ RefPtr<StorageDevice> IDEChannel::slave_device() const
     return m_slave;
 }
 
-UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, IOAddressGroup io_group, ChannelType type)
-    : IRQHandler(type == ChannelType::Primary ? PATA_PRIMARY_IRQ : PATA_SECONDARY_IRQ)
-    , m_channel_type(type)
-    , m_io_group(io_group)
-    , m_parent_controller(controller)
+UNMAP_AFTER_INIT void IDEChannel::initialize()
 {
     disable_irq();
-
-    // FIXME: The device may not be capable of DMA.
-
     dbgln_if(PATA_DEBUG, "IDEChannel: {} IO base: {}", channel_type_string(), m_io_group.io_base());
     dbgln_if(PATA_DEBUG, "IDEChannel: {} control base: {}", channel_type_string(), m_io_group.control_base());
     if (m_io_group.bus_master_base().has_value())
@@ -81,6 +79,24 @@ UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, IOAddre
 
     // Note: calling to detect_disks could generate an interrupt, clear it if that's the case
     clear_pending_interrupts();
+}
+
+UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
+    : IRQHandler(irq)
+    , m_channel_type(type)
+    , m_io_group(io_group)
+    , m_parent_controller(controller)
+{
+    initialize();
+}
+
+UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, IOAddressGroup io_group, ChannelType type)
+    : IRQHandler(type == ChannelType::Primary ? PATA_PRIMARY_IRQ : PATA_SECONDARY_IRQ)
+    , m_channel_type(type)
+    , m_io_group(io_group)
+    , m_parent_controller(controller)
+{
+    initialize();
 }
 
 void IDEChannel::clear_pending_interrupts() const
@@ -272,8 +288,14 @@ UNMAP_AFTER_INIT void IDEChannel::detect_disks()
 
     // There are only two possible disks connected to a channel
     for (auto i = 0; i < 2; i++) {
+        // We need to select the drive and then we wait 20 microseconds... and it doesn't hurt anything so let's just do it.
         m_io_group.io_base().offset(ATA_REG_HDDEVSEL).out<u8>(0xA0 | (i << 4)); // First, we need to select the drive itself
+        IO::delay(20);
 
+        m_io_group.io_base().offset(ATA_REG_SECCOUNT0).out<u8>(0);
+        m_io_group.io_base().offset(ATA_REG_LBA0).out<u8>(0);
+        m_io_group.io_base().offset(ATA_REG_LBA1).out<u8>(0);
+        m_io_group.io_base().offset(ATA_REG_LBA2).out<u8>(0);
         m_io_group.io_base().offset(ATA_REG_COMMAND).out<u8>(ATA_CMD_IDENTIFY); // Send the ATA_IDENTIFY command
 
         // Wait for the BSY flag to be reset
@@ -373,7 +395,9 @@ void IDEChannel::ata_access(Direction direction, bool slave_request, u64 lba, u8
 
     wait_until_not_busy();
 
+    // We need to select the drive and then we wait 20 microseconds... and it doesn't hurt anything so let's just do it.
     m_io_group.io_base().offset(ATA_REG_HDDEVSEL).out<u8>(0xE0 | (static_cast<u8>(slave_request) << 4) | head);
+    IO::delay(20);
 
     if (lba_mode == LBAMode::FortyEightBit) {
         m_io_group.io_base().offset(ATA_REG_SECCOUNT1).out<u8>(0);

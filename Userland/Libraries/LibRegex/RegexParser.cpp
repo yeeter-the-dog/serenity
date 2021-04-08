@@ -151,6 +151,11 @@ ALWAYS_INLINE void Parser::reset()
     m_parser_state.current_token = m_parser_state.lexer.next();
     m_parser_state.error = Error::NoError;
     m_parser_state.error_token = { TokenType::Eof, 0, StringView(nullptr) };
+    m_parser_state.capture_group_minimum_lengths.clear();
+    m_parser_state.capture_groups_count = 0;
+    m_parser_state.named_capture_groups_count = 0;
+    m_parser_state.named_capture_group_minimum_lengths.clear();
+    m_parser_state.named_capture_groups.clear();
 }
 
 Parser::Result Parser::parse(Optional<AllOptions> regex_options)
@@ -1687,6 +1692,7 @@ bool ECMA262Parser::parse_capture_group(ByteCode& stack, size_t& match_length_mi
 
         if (consume("<")) {
             ++m_parser_state.named_capture_groups_count;
+            auto group_index = ++m_parser_state.capture_groups_count; // Named capture groups count as normal capture groups too.
             auto name = read_capture_group_specifier();
 
             if (name.is_empty()) {
@@ -1702,12 +1708,15 @@ bool ECMA262Parser::parse_capture_group(ByteCode& stack, size_t& match_length_mi
             consume(TokenType::RightParen, Error::MismatchingParen);
 
             stack.insert_bytecode_group_capture_left(name);
+            stack.insert_bytecode_group_capture_left(group_index);
             stack.append(move(capture_group_bytecode));
             stack.insert_bytecode_group_capture_right(name);
+            stack.insert_bytecode_group_capture_right(group_index);
 
             match_length_minimum += length;
 
             m_parser_state.named_capture_group_minimum_lengths.set(name, length);
+            m_parser_state.capture_group_minimum_lengths.set(group_index, length);
             return true;
         }
 

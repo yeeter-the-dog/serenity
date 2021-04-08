@@ -10,9 +10,11 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`bison`](bison/)              | GNU Bison                                     | 1.25              | https://www.gnu.org/software/bison/                   |
 | [`byacc`](byacc/)              | Berkeley Yacc                                 | 20191125          | https://invisible-island.net/byacc/byacc.html         |
 | [`bzip2`](bzip2/)              | bzip2                                         | 1.0.8             | https://sourceware.org/bzip2/                         |
+| [`carl`](carl/)                | Crypto Ancienne Resource Loader               | 1.5               | https://github.com/classilla/cryanc                   |
 | [`c-ray`](c-ray/)              | C-Ray                                         |                   | https://github.com/vkoskiv/c-ray                      |
 | [`chester`](chester/)          | Chester Gameboy Emulator                      |                   | https://github.com/veikkos/chester                    |
 | [`cmake`](cmake/)              | CMake                                         | 3.19.4            | https://cmake.org/                                    |
+| [`cmatrix`](cmatrix/)          | cmatrix                                       |                   | https://github.com/abishekvashok/cmatrix              |
 | [`curl`](curl/)                | curl                                          | 7.65.3            | https://curl.se/                                      |
 | [`dash`](dash/)                | DASH                                          | 0.5.10.2          | http://gondor.apana.org.au/~herbert/dash              |
 | [`diffutils`](diffutils/)      | GNU Diffutils                                 | 3.5               | https://www.gnu.org/software/diffutils/               |
@@ -21,6 +23,7 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`dropbear`](dropbear/)        | Dropbear SSH                                  | 2019.78           | https://dropbear.nl/mirror/dropbear.html              |
 | [`ed`](ed/)                    | GNU ed                                        | 1.15              | https://www.gnu.org/software/ed/                      |
 | [`figlet`](figlet/)            | FIGlet                                        | 2.2.5             | http://www.figlet.org/                                |
+| [`flatbuffers`](flatbuffers/)  | Flatbuffers                                   | 1.12.0            | https://github.com/google/flatbuffers                 |
 | [`flex`](flex/)                | flex                                          | 2.6.4             | https://github.com/westes/flex                        |
 | [`freetype`](freetype/)        | FreeType                                      | 2.10.4            | https://www.freetype.org/                             |
 | [`frotz`](frotz/)              | Frotz                                         |                   | https://gitlab.com/DavidGriffith/frotz                |
@@ -45,6 +48,7 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`libpuffy`](libpuffy/)        | libpuffy                                      | 1.0               | https://github.com/ibara/libpuffy                     |
 | [`libtiff`](libtiff/)          | libtiff                                       | 4.2.0             | http://www.libtiff.org/                               |
 | [`libvorbis`](libvorbis/)      | libvorbis                                     | 1.3.7             | https://github.com/xiph/vorbis                        |
+| [`libzip`](libzip/)            | libzip                                        | 1.7.3             | https://libzip.org/                                   |
 | [`links`](links/)              | Links web browser                             | 2.22              | http://links.twibright.com/                           |
 | [`lua`](lua/)                  | Lua                                           | 5.3.5             | https://www.lua.org/                                  |
 | [`m4`](m4/)                    | GNU M4                                        | 1.4.9             | https://www.gnu.org/software/m4/                      |
@@ -62,15 +66,19 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`nyancat`](nyancat/)          | Nyancat                                       |                   | https://github.com/klange/nyancat                     |
 | [`openssh`](openssh/)          | OpenSSH                                       | 8.3-9ca7e9c       | https://github.com/openssh/openssh-portable           |
 | [`openssl`](openssl/)          | OpenSSL                                       | 1.0.2             | https://www.openssl.org/                              |
+| [`oksh`](oksh/)                | oksh                                          | 6.8.1             | https://github.com/ibara/oksh                         |
 | [`patch`](patch/)              | patch (OpenBSD)                               | 6.6               | https://github.com/ibara/libpuffy                     |
 | [`pcre2`](pcre2/)              | Perl-compatible Regular Expressions (PCRE2)   | 10.34             | https://www.pcre.org/                                 |
 | [`pkgconf`](pkgconf/)          | pkgconf                                       | 1.7.3             | https://github.com/pkgconf/pkgconf                    |
+| [`SDLPoP`](SDLPoP/)            | Prince of Persia game                         |                   | https://github.com/NagyD/SDLPoP                       |
 | [`printf`](printf/)            | printf (OpenBSD)                              | 6.6               | https://github.com/ibara/libpuffy                     |
 | [`pt2-clone`](pt2-clone/)      | ProTracker 2 clone                            | 1.28              | https://github.com/8bitbubsy/pt2-clone                |
-| [`python3`](python3/)          | Python                                        | 3.9.2             | https://www.python.org/                               |
+| [`python3`](python3/)          | Python                                        | 3.9.4             | https://www.python.org/                               |
 | [`quake`](quake/)              | Quake                                         | 0.65              | https://github.com/SerenityOS/SerenityQuake           |
 | [`rsync`](rsync/)              | rsync                                         | 3.1.3             | https://rsync.samba.org/                              |
+| [`scummvm`](scummvm/)          | ScummVM                                       | 2.2.0             | https://www.scummvm.org/                              |
 | [`SDL2`](SDL2/)                | Simple DirectMedia Layer (SDL2)               |                   | https://github.com/SerenityOS/SDL                     |
+| [`SDL2_gfx`](SDL2_gfx/)        | SDL2\_gfx (Graphics primitives add-on for SDL2) | 1.0.4           | https://sourceforge.net/projects/sdl2gfx/             |
 | [`SDL2_image`](SDL2_image/)    | SDL2\_image (Image loading add-on for SDL2)   | 2.0.5             | https://www.libsdl.org/projects/SDL_image/            |
 | [`SDL2_mixer`](SDL2_mixer/)    | SDL2\_mixer (audio mixer add-on for SDL2)     | 2.0.4             | https://www.libsdl.org/projects/SDL_mixer/            |
 | [`SDL2_ttf`](SDL2_ttf/)        | SDL2\_ttf (TrueType Font add-on for SDL2)     | 2.0.15            | https://www.libsdl.org/projects/SDL_ttf/              |
@@ -78,6 +86,7 @@ Please make sure to keep this list up to date when adding and updating ports. :^
 | [`sl`](sl/)                    | Steam Locomotive (SL)                         |                   | https://github.com/mtoyoda/sl                         |
 | [`sqlite`](sqlite/)            | SQLite                                        | 3350300           | https://www.sqlite.org/                               |
 | [`stress-ng`](stress-ng/)      | stress-ng                                     | 0.11.23           | https://github.com/ColinIanKing/stress-ng             |
+| [`Super-Mario`](Super-Mario/)  | Super-Mario Clone                             |                   |https://github.com/Bennyhwanggggg/Super-Mario-Clone-Cpp|
 | [`termcap`](termcap/)          | GNU termcap                                   | 1.3.1             | https://www.gnu.org/software/termutils/               |
 | [`tinycc`](tinycc/)            | Tiny C Compiler (TinyCC)                      | dev               | https://github.com/TinyCC/tinycc                      |
 | [`tinyscheme`](tinyscheme/)    | TinyScheme Interpreter                        | 1.42              | https://sourceforge.net/projects/tinyscheme/          |

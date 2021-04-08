@@ -43,6 +43,7 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/DOM/Range.h>
+#include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/DOM/Window.h>
 #include <LibWeb/Dump.h>
@@ -114,7 +115,7 @@ void Document::removed_last_ref()
             // Gather up all the descendants of this document and prune them from the tree.
             // FIXME: This could definitely be more elegant.
             NonnullRefPtrVector<Node> descendants;
-            for_each_in_subtree([&](auto& node) {
+            for_each_in_inclusive_subtree([&](auto& node) {
                 if (&node != this)
                     descendants.append(node);
                 return IterationDecision::Continue;
@@ -124,7 +125,7 @@ void Document::removed_last_ref()
                 VERIFY(&node.document() == this);
                 VERIFY(!node.is_document());
                 if (node.parent())
-                    node.parent()->remove_child(node);
+                    node.remove();
             }
         }
 
@@ -282,9 +283,7 @@ void Document::set_title(const String& title)
         head_element->append_child(*title_element);
     }
 
-    while (RefPtr<Node> child = title_element->first_child())
-        title_element->remove_child(child.release_nonnull());
-
+    title_element->remove_all_children(true);
     title_element->append_child(adopt(*new Text(*this, title)));
 
     if (auto* page = this->page()) {
@@ -316,7 +315,7 @@ void Document::tear_down_layout_tree()
 
     NonnullRefPtrVector<Layout::Node> layout_nodes;
 
-    m_layout_root->for_each_in_subtree([&](auto& layout_node) {
+    m_layout_root->for_each_in_inclusive_subtree([&](auto& layout_node) {
         layout_nodes.append(layout_node);
         return IterationDecision::Continue;
     });
@@ -360,6 +359,32 @@ RefPtr<Gfx::Bitmap> Document::background_image() const
     if (!background_image)
         return {};
     return background_image->bitmap();
+}
+
+CSS::Repeat Document::background_repeat_x() const
+{
+    auto* body_element = body();
+    if (!body_element)
+        return CSS::Repeat::Repeat;
+
+    auto* body_layout_node = body_element->layout_node();
+    if (!body_layout_node)
+        return CSS::Repeat::Repeat;
+
+    return body_layout_node->computed_values().background_repeat_x();
+}
+
+CSS::Repeat Document::background_repeat_y() const
+{
+    auto* body_element = body();
+    if (!body_element)
+        return CSS::Repeat::Repeat;
+
+    auto* body_layout_node = body_element->layout_node();
+    if (!body_layout_node)
+        return CSS::Repeat::Repeat;
+
+    return body_layout_node->computed_values().background_repeat_y();
 }
 
 URL Document::complete_url(const String& string) const
@@ -479,7 +504,7 @@ void Document::set_hovered_node(Node* node)
 NonnullRefPtrVector<Element> Document::get_elements_by_name(const String& name) const
 {
     NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
+    for_each_in_inclusive_subtree_of_type<Element>([&](auto& element) {
         if (element.attribute(HTML::AttributeNames::name) == name)
             elements.append(element);
         return IterationDecision::Continue;
@@ -492,7 +517,7 @@ NonnullRefPtrVector<Element> Document::get_elements_by_tag_name(const FlyString&
     // FIXME: Support "*" for tag_name
     // https://dom.spec.whatwg.org/#concept-getelementsbytagname
     NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
+    for_each_in_inclusive_subtree_of_type<Element>([&](auto& element) {
         if (element.namespace_() == Namespace::HTML
                 ? element.local_name().to_lowercase() == tag_name.to_lowercase()
                 : element.local_name() == tag_name) {
@@ -506,7 +531,7 @@ NonnullRefPtrVector<Element> Document::get_elements_by_tag_name(const FlyString&
 NonnullRefPtrVector<Element> Document::get_elements_by_class_name(const FlyString& class_name) const
 {
     NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
+    for_each_in_inclusive_subtree_of_type<Element>([&](auto& element) {
         if (element.has_class(class_name, in_quirks_mode() ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive))
             elements.append(element);
         return IterationDecision::Continue;
@@ -633,12 +658,52 @@ NonnullRefPtrVector<HTML::HTMLScriptElement> Document::take_scripts_to_execute_a
     return move(m_scripts_to_execute_as_soon_as_possible);
 }
 
-void Document::adopt_node(Node& subtree_root)
+// https://dom.spec.whatwg.org/#concept-node-adopt
+void Document::adopt_node(Node& node)
 {
-    subtree_root.for_each_in_subtree([&](auto& node) {
-        node.set_document({}, *this);
-        return IterationDecision::Continue;
-    });
+    auto& old_document = node.document();
+    if (node.parent())
+        node.remove();
+
+    if (&old_document != this) {
+        // FIXME: This should be shadow-including.
+        node.for_each_in_inclusive_subtree([&](auto& inclusive_descendant) {
+            inclusive_descendant.set_document({}, *this);
+            // FIXME: If inclusiveDescendant is an element, then set the node document of each attribute in inclusiveDescendant’s attribute list to document.
+            return IterationDecision::Continue;
+        });
+
+        // FIXME: For each inclusiveDescendant in node’s shadow-including inclusive descendants that is custom,
+        //        enqueue a custom element callback reaction with inclusiveDescendant, callback name "adoptedCallback",
+        //        and an argument list containing oldDocument and document.
+
+        // FIXME: This should be shadow-including.
+        node.for_each_in_inclusive_subtree([&](auto& inclusive_descendant) {
+            inclusive_descendant.adopted_from(old_document);
+            return IterationDecision::Continue;
+        });
+    }
+}
+
+// https://dom.spec.whatwg.org/#dom-document-adoptnode
+NonnullRefPtr<Node> Document::adopt_node_binding(NonnullRefPtr<Node> node)
+{
+    if (is<Document>(*node)) {
+        dbgln("Document::adopt_node_binding: Cannot adopt a document into a document (FIXME: throw as NotSupportedError exception, see issue #6075");
+        return node;
+    }
+
+    if (is<ShadowRoot>(*node)) {
+        dbgln("Document::adopt_node_binding: Cannot adopt a shadow root into a document (FIXME: throw as HierarchyRequestError exception, see issue #6075");
+        return node;
+    }
+
+    if (is<DocumentFragment>(*node) && downcast<DocumentFragment>(*node).host())
+        return node;
+
+    adopt_node(*node);
+
+    return node;
 }
 
 const DocumentType* Document::doctype() const

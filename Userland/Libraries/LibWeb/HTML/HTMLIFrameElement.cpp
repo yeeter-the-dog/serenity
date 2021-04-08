@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,28 +24,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Event.h>
-#include <LibWeb/DOM/Window.h>
-#include <LibWeb/Dump.h>
-#include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
-#include <LibWeb/HTML/Parser/HTMLDocumentParser.h>
-#include <LibWeb/InProcessWebView.h>
 #include <LibWeb/Layout/FrameBox.h>
-#include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Origin.h>
 #include <LibWeb/Page/Frame.h>
 
 namespace Web::HTML {
 
 HTMLIFrameElement::HTMLIFrameElement(DOM::Document& document, QualifiedName qualified_name)
-    : HTMLElement(document, move(qualified_name))
+    : FrameHostElement(document, move(qualified_name))
 {
-    VERIFY(document.frame());
-    m_content_frame = Frame::create_subframe(*this, document.frame()->main_frame());
 }
 
 HTMLIFrameElement::~HTMLIFrameElement()
@@ -65,8 +54,18 @@ void HTMLIFrameElement::parse_attribute(const FlyString& name, const String& val
         load_src(value);
 }
 
+void HTMLIFrameElement::inserted()
+{
+    FrameHostElement::inserted();
+    if (is_connected())
+        load_src(attribute(HTML::AttributeNames::src));
+}
+
 void HTMLIFrameElement::load_src(const String& value)
 {
+    if (!m_content_frame)
+        return;
+
     auto url = document().complete_url(value);
     if (!url.is_valid()) {
         dbgln("iframe failed to load URL: Invalid URL: {}", value);
@@ -79,28 +78,6 @@ void HTMLIFrameElement::load_src(const String& value)
 
     dbgln("Loading iframe document from {}", value);
     m_content_frame->loader().load(url, FrameLoader::Type::IFrame);
-}
-
-Origin HTMLIFrameElement::content_origin() const
-{
-    if (!m_content_frame || !m_content_frame->document())
-        return {};
-    return m_content_frame->document()->origin();
-}
-
-bool HTMLIFrameElement::may_access_from_origin(const Origin& origin) const
-{
-    return origin.is_same(content_origin());
-}
-
-const DOM::Document* HTMLIFrameElement::content_document() const
-{
-    return m_content_frame ? m_content_frame->document() : nullptr;
-}
-
-void HTMLIFrameElement::content_frame_did_load(Badge<FrameLoader>)
-{
-    dispatch_event(DOM::Event::create(EventNames::load));
 }
 
 }

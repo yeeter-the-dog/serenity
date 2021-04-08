@@ -129,6 +129,8 @@ public:
 
     Color background_color(const Gfx::Palette&) const;
     RefPtr<Gfx::Bitmap> background_image() const;
+    CSS::Repeat background_repeat_x() const;
+    CSS::Repeat background_repeat_y() const;
 
     Color link_color() const;
     void set_link_color(Color);
@@ -186,6 +188,7 @@ public:
     void set_quirks_mode(QuirksMode mode) { m_quirks_mode = mode; }
 
     void adopt_node(Node&);
+    NonnullRefPtr<Node> adopt_node_binding(NonnullRefPtr<Node>);
 
     const DocumentType* doctype() const;
     const String& compat_mode() const;

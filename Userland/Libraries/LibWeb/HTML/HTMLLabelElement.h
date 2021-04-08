@@ -36,6 +36,10 @@ public:
 
     HTMLLabelElement(DOM::Document&, QualifiedName);
     virtual ~HTMLLabelElement() override;
+
+    virtual RefPtr<Layout::Node> create_layout_node() override;
+
+    String for_() const { return attribute(HTML::AttributeNames::for_); }
 };
 
 }

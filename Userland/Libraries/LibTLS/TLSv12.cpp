@@ -667,13 +667,13 @@ void TLSv12::try_disambiguate_error() const
     switch ((AlertDescription)m_context.critical_error) {
     case AlertDescription::HandshakeFailure:
         if (!m_context.cipher_spec_set) {
-            dbgln("- No cipher suite in common with {}", m_context.SNI);
+            dbgln("- No cipher suite in common with {}", m_context.extensions.SNI);
         } else {
             dbgln("- Unknown internal issue");
         }
         break;
     case AlertDescription::InsufficientSecurity:
-        dbgln("- No cipher suite in common with {} (the server is oh so secure)", m_context.SNI);
+        dbgln("- No cipher suite in common with {} (the server is oh so secure)", m_context.extensions.SNI);
         break;
     case AlertDescription::ProtocolVersion:
         dbgln("- The server refused to negotiate with TLS 1.2 :(");
@@ -737,6 +737,9 @@ void TLSv12::set_root_certificates(Vector<Certificate> certificates)
 
 bool Context::verify_chain() const
 {
+    if (!options.validate_certificates)
+        return true;
+
     const Vector<Certificate>* local_chain = nullptr;
     if (is_server) {
         dbgln("Unsupported: Server mode");
@@ -813,10 +816,10 @@ Optional<size_t> TLSv12::verify_chain_and_get_matching_certificate(const StringV
     return {};
 }
 
-TLSv12::TLSv12(Core::Object* parent, Version version)
+TLSv12::TLSv12(Core::Object* parent, Options options)
     : Core::Socket(Core::Socket::Type::TCP, parent)
 {
-    m_context.version = version;
+    m_context.options = move(options);
     m_context.is_server = false;
     m_context.tls_buffer = ByteBuffer::create_uninitialized(0);
 #ifdef SOCK_NONBLOCK

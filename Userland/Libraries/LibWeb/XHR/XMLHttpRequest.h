@@ -68,12 +68,15 @@ public:
     using RefCounted::unref;
 
     ReadyState ready_state() const { return m_ready_state; };
+    unsigned status() const { return m_status; };
     String response_text() const;
 
     DOM::ExceptionOr<void> open(const String& method, const String& url);
     DOM::ExceptionOr<void> send();
 
     DOM::ExceptionOr<void> set_request_header(const String& header, const String& value);
+
+    String get_response_header(const String& name) { return m_response_headers.get(name).value_or({}); }
 
 private:
     virtual void ref_event_target() override { ref(); }
@@ -82,6 +85,7 @@ private:
     virtual JS::Object* create_wrapper(JS::GlobalObject&) override;
 
     void set_ready_state(ReadyState);
+    void set_status(unsigned status) { m_status = status; }
     void fire_progress_event(const String&, u64, u64);
 
     explicit XMLHttpRequest(DOM::Window&);
@@ -89,12 +93,14 @@ private:
     NonnullRefPtr<DOM::Window> m_window;
 
     ReadyState m_ready_state { ReadyState::Unsent };
+    unsigned m_status { 0 };
     bool m_send { false };
 
     String m_method;
     URL m_url;
 
     HashMap<String, String, CaseInsensitiveStringTraits> m_request_headers;
+    HashMap<String, String, CaseInsensitiveStringTraits> m_response_headers;
 
     bool m_synchronous { false };
     bool m_upload_complete { false };

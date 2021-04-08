@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,6 +74,7 @@ public:
     };
 
     enum class GetOwnPropertyReturnType {
+        All,
         StringOnly,
         SymbolOnly,
     };
@@ -80,6 +82,11 @@ public:
     enum class PutOwnPropertyMode {
         Put,
         DefineProperty,
+    };
+
+    enum class IntegrityLevel {
+        Sealed,
+        Frozen,
     };
 
     Shape& shape() { return *m_shape; }
@@ -95,7 +102,8 @@ public:
     virtual bool put(const PropertyName&, Value, Value receiver = {});
 
     Value get_own_property(const PropertyName&, Value receiver) const;
-    Value get_own_properties(const Object& this_object, PropertyKind, bool only_enumerable_properties = false, GetOwnPropertyReturnType = GetOwnPropertyReturnType::StringOnly) const;
+    MarkedValueList get_own_properties(PropertyKind, bool only_enumerable_properties = false, GetOwnPropertyReturnType = GetOwnPropertyReturnType::All) const;
+    MarkedValueList get_enumerable_own_property_names(PropertyKind) const;
     virtual Optional<PropertyDescriptor> get_own_property_descriptor(const PropertyName&) const;
     Value get_own_property_descriptor_object(const PropertyName&) const;
 
@@ -125,6 +133,9 @@ public:
 
     virtual bool is_extensible() const { return m_is_extensible; }
     virtual bool prevent_extensions();
+
+    bool set_integrity_level(IntegrityLevel);
+    bool test_integrity_level(IntegrityLevel);
 
     virtual Value value_of() const { return Value(const_cast<Object*>(this)); }
     virtual Value ordinary_to_primitive(Value::PreferredType preferred_type) const;
@@ -167,8 +178,8 @@ protected:
     virtual bool put_by_index(u32 property_index, Value);
 
 private:
-    bool put_own_property(Object& this_object, const StringOrSymbol& property_name, Value, PropertyAttributes attributes, PutOwnPropertyMode = PutOwnPropertyMode::Put, bool throw_exceptions = true);
-    bool put_own_property_by_index(Object& this_object, u32 property_index, Value, PropertyAttributes attributes, PutOwnPropertyMode = PutOwnPropertyMode::Put, bool throw_exceptions = true);
+    bool put_own_property(const StringOrSymbol& property_name, Value, PropertyAttributes attributes, PutOwnPropertyMode = PutOwnPropertyMode::Put, bool throw_exceptions = true);
+    bool put_own_property_by_index(u32 property_index, Value, PropertyAttributes attributes, PutOwnPropertyMode = PutOwnPropertyMode::Put, bool throw_exceptions = true);
 
     Value call_native_property_getter(NativeProperty& property, Value this_value) const;
     void call_native_property_setter(NativeProperty& property, Value this_value, Value) const;

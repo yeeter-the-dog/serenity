@@ -39,25 +39,25 @@ class ProcessModel final : public GUI::Model {
 public:
     enum Column {
         Icon = 0,
+        PID,
         Name,
         CPU,
-        Processor,
         State,
-        Priority,
         User,
-        PID,
-        TID,
-        PPID,
-        PGID,
-        SID,
         Virtual,
-        Physical,
         DirtyPrivate,
+        Pledge,
+        Physical,
         CleanInode,
         PurgeableVolatile,
         PurgeableNonvolatile,
         Veil,
-        Pledge,
+        Processor,
+        Priority,
+        TID,
+        PPID,
+        PGID,
+        SID,
         Syscalls,
         InodeFaults,
         ZeroFaults,
@@ -94,6 +94,7 @@ public:
     };
 
     Function<void(const NonnullOwnPtrVector<CpuInfo>&)> on_cpu_info_change;
+    Function<void(int process_count, int thread_count)> on_state_update;
 
     const NonnullOwnPtrVector<CpuInfo>& cpus() const { return m_cpus; }
 
@@ -108,6 +109,7 @@ private:
         pid_t sid;
         unsigned ticks_user;
         unsigned ticks_kernel;
+        bool kernel;
         String executable;
         String name;
         String state;
@@ -145,4 +147,5 @@ private:
     NonnullOwnPtrVector<CpuInfo> m_cpus;
     Vector<int> m_tids;
     RefPtr<Core::File> m_proc_all;
+    GUI::Icon m_kernel_process_icon;
 };

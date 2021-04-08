@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,11 +26,11 @@
 
 #pragma once
 
-#include <LibWeb/HTML/HTMLElement.h>
+#include <LibWeb/HTML/FrameHostElement.h>
 
 namespace Web::HTML {
 
-class HTMLIFrameElement final : public HTMLElement {
+class HTMLIFrameElement final : public FrameHostElement {
 public:
     using WrapperType = Bindings::HTMLIFrameElementWrapper;
 
@@ -39,22 +39,11 @@ public:
 
     virtual RefPtr<Layout::Node> create_layout_node() override;
 
-    Frame* content_frame() { return m_content_frame; }
-    const Frame* content_frame() const { return m_content_frame; }
-
-    const DOM::Document* content_document() const;
-
-    Origin content_origin() const;
-    bool may_access_from_origin(const Origin&) const;
-
-    void content_frame_did_load(Badge<FrameLoader>);
-
 private:
+    virtual void inserted() override;
     virtual void parse_attribute(const FlyString& name, const String& value) override;
 
     void load_src(const String&);
-
-    RefPtr<Frame> m_content_frame;
 };
 
 }

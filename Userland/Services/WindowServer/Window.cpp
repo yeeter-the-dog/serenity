@@ -34,6 +34,7 @@
 #include "WindowManager.h"
 #include <AK/Badge.h>
 #include <WindowServer/WindowClientEndpoint.h>
+#include <ctype.h>
 
 namespace WindowServer {
 
@@ -445,12 +446,7 @@ void Window::event(Core::Event& event)
         m_client->post_message(Messages::WindowClient::WindowLeft(m_window_id));
         break;
     case Event::KeyDown:
-        m_client->post_message(
-            Messages::WindowClient::KeyDown(m_window_id,
-                (u32) static_cast<const KeyEvent&>(event).code_point(),
-                (u32) static_cast<const KeyEvent&>(event).key(),
-                static_cast<const KeyEvent&>(event).modifiers(),
-                (u32) static_cast<const KeyEvent&>(event).scancode()));
+        handle_keydown_event(static_cast<const KeyEvent&>(event));
         break;
     case Event::KeyUp:
         m_client->post_message(
@@ -481,6 +477,27 @@ void Window::event(Core::Event& event)
     default:
         break;
     }
+}
+
+void Window::handle_keydown_event(const KeyEvent& event)
+{
+    if (event.modifiers() == Mod_Alt && event.code_point() && menubar()) {
+        Menu* menu_to_open = nullptr;
+        menubar()->for_each_menu([&](Menu& menu) {
+            if (tolower(menu.alt_shortcut_character()) == tolower(event.code_point())) {
+                menu_to_open = &menu;
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+        if (menu_to_open) {
+            frame().open_menubar_menu(*menu_to_open);
+            if (!menu_to_open->is_empty())
+                menu_to_open->set_hovered_item(0);
+            return;
+        }
+    }
+    m_client->post_message(Messages::WindowClient::KeyDown(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode()));
 }
 
 void Window::set_global_cursor_tracking_enabled(bool enabled)
@@ -529,7 +546,7 @@ void Window::invalidate(bool invalidate_frame, bool re_render_frame)
 
 void Window::invalidate(const Gfx::IntRect& rect, bool with_frame)
 {
-    if (type() == WindowType::MenuApplet) {
+    if (type() == WindowType::Applet) {
         AppletManager::the().invalidate_applet(*this, rect);
         return;
     }

@@ -79,8 +79,6 @@ TaskbarWindow::TaskbarWindow(NonnullRefPtr<GUI::Menu> start_menu)
 
     on_screen_rect_change(GUI::Desktop::the().rect());
 
-    GUI::Desktop::the().on_rect_change = [this](const Gfx::IntRect& rect) { on_screen_rect_change(rect); };
-
     auto& main_widget = set_main_widget<TaskbarWidget>();
     main_widget.set_layout<GUI::HorizontalBoxLayout>();
     main_widget.layout()->set_margins({ 3, 3, 3, 1 });
@@ -91,10 +89,7 @@ TaskbarWindow::TaskbarWindow(NonnullRefPtr<GUI::Menu> start_menu)
     start_button.set_fixed_size(80, 22);
     auto app_icon = GUI::Icon::default_icon("ladybug");
     start_button.set_icon(app_icon.bitmap_for_size(16));
-
-    start_button.on_click = [&](auto) {
-        m_start_menu->popup(start_button.screen_relative_rect().top_left());
-    };
+    start_button.set_menu(m_start_menu);
 
     create_quick_launch_bar();
 
@@ -345,4 +340,9 @@ void TaskbarWindow::wm_event(GUI::WMEvent& event)
     default:
         break;
     }
+}
+
+void TaskbarWindow::screen_rect_change_event(GUI::ScreenRectChangeEvent& event)
+{
+    on_screen_rect_change(event.rect());
 }

@@ -43,12 +43,26 @@
 
 namespace WindowServer {
 
-Menu::Menu(ClientConnection* client, int menu_id, const String& name)
+static u32 find_ampersand_shortcut_character(const String& string)
+{
+    Utf8View utf8_view { string };
+    for (auto it = utf8_view.begin(); it != utf8_view.end(); ++it) {
+        if (*it == '&') {
+            ++it;
+            if (it != utf8_view.end() && *it != '&')
+                return *it;
+        }
+    }
+    return 0;
+}
+
+Menu::Menu(ClientConnection* client, int menu_id, String name)
     : Core::Object(client)
     , m_client(client)
     , m_menu_id(menu_id)
     , m_name(move(name))
 {
+    m_alt_shortcut_character = find_ampersand_shortcut_character(m_name);
 }
 
 Menu::~Menu()
@@ -151,10 +165,10 @@ Window& Menu::ensure_menu_window()
     }
 
     auto window = Window::construct(*this, WindowType::Menu);
+    window->set_visible(false);
     window->set_rect(0, 0, width, window_height);
     m_menu_window = move(window);
     draw();
-
     return *m_menu_window;
 }
 
@@ -291,7 +305,8 @@ void Menu::update_for_new_hovered_item(bool make_input)
         hovered_item()->submenu()->do_popup(hovered_item()->rect().top_right().translated(menu_window()->rect().location()), make_input, true);
     } else {
         MenuManager::the().close_everyone_not_in_lineage(*this);
-        ensure_menu_window().set_visible(true);
+        ensure_menu_window();
+        set_visible(true);
     }
     redraw();
 }
@@ -593,7 +608,7 @@ void Menu::do_popup(const Gfx::IntPoint& position, bool make_input, bool as_subm
     }
 
     window.move_to(adjusted_pos);
-    window.set_visible(true);
+    set_visible(true);
     MenuManager::the().open_menu(*this, make_input);
     WindowManager::the().did_popup_a_menu({});
 }
@@ -610,6 +625,17 @@ bool Menu::is_menu_ancestor_of(const Menu& other) const
             return true;
     }
     return false;
+}
+
+void Menu::set_visible(bool visible)
+{
+    if (!menu_window())
+        return;
+    if (visible == menu_window()->is_visible())
+        return;
+    menu_window()->set_visible(visible);
+    if (m_client)
+        m_client->post_message(Messages::WindowClient::MenuVisibilityDidChange(m_menu_id, visible));
 }
 
 }

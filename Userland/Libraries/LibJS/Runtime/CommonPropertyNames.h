@@ -118,6 +118,7 @@ namespace JS {
     P(flat)                                  \
     P(floor)                                 \
     P(forEach)                               \
+    P(freeze)                                \
     P(from)                                  \
     P(fromCharCode)                          \
     P(fround)                                \
@@ -160,10 +161,12 @@ namespace JS {
     P(isArray)                               \
     P(isExtensible)                          \
     P(isFinite)                              \
+    P(isFrozen)                              \
     P(isInteger)                             \
     P(isNaN)                                 \
     P(isPrototypeOf)                         \
     P(isSafeInteger)                         \
+    P(isSealed)                              \
     P(isView)                                \
     P(join)                                  \
     P(keyFor)                                \
@@ -206,6 +209,7 @@ namespace JS {
     P(resolve)                               \
     P(reverse)                               \
     P(round)                                 \
+    P(seal)                                  \
     P(set)                                   \
     P(setFullYear)                           \
     P(setHours)                              \

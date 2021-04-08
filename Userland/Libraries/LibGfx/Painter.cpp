@@ -1387,8 +1387,8 @@ void Painter::draw_line(const IntPoint& p1, const IntPoint& p2, Color color, int
     // FIXME: Implement dotted/dashed diagonal lines.
     VERIFY(style == LineStyle::Solid);
 
-    const double adx = abs(point2.x() - point1.x());
-    const double ady = abs(point2.y() - point1.y());
+    const int adx = abs(point2.x() - point1.x());
+    const int ady = abs(point2.y() - point1.y());
 
     if (adx > ady) {
         if (point1.x() > point2.x())
@@ -1399,34 +1399,34 @@ void Painter::draw_line(const IntPoint& p1, const IntPoint& p2, Color color, int
     }
 
     // FIXME: Implement clipping below.
-    const double dx = point2.x() - point1.x();
-    const double dy = point2.y() - point1.y();
-    double error = 0;
+    const int dx = point2.x() - point1.x();
+    const int dy = point2.y() - point1.y();
+    int error = 0;
 
     if (dx > dy) {
-        const double y_step = dy == 0 ? 0 : (dy > 0 ? 1 : -1);
-        const double delta_error = fabs(dy / dx);
+        const int y_step = dy == 0 ? 0 : (dy > 0 ? 1 : -1);
+        const int delta_error = 2 * abs(dy);
         int y = point1.y();
         for (int x = point1.x(); x <= point2.x(); ++x) {
             if (clip_rect.contains(x, y))
                 draw_physical_pixel({ x, y }, color, thickness);
             error += delta_error;
-            if (error >= 0.5) {
-                y = (double)y + y_step;
-                error -= 1.0;
+            if (error >= dx) {
+                y += y_step;
+                error -= 2 * dx;
             }
         }
     } else {
-        const double x_step = dx == 0 ? 0 : (dx > 0 ? 1 : -1);
-        const double delta_error = fabs(dx / dy);
+        const int x_step = dx == 0 ? 0 : (dx > 0 ? 1 : -1);
+        const int delta_error = 2 * abs(dx);
         int x = point1.x();
         for (int y = point1.y(); y <= point2.y(); ++y) {
             if (clip_rect.contains(x, y))
                 draw_physical_pixel({ x, y }, color, thickness);
             error += delta_error;
-            if (error >= 0.5) {
-                x = (double)x + x_step;
-                error -= 1.0;
+            if (error >= dy) {
+                x += x_step;
+                error -= 2 * dy;
             }
         }
     }
@@ -1802,6 +1802,51 @@ void Painter::blit_tiled(const IntRect& dst_rect, const Gfx::Bitmap& bitmap, con
                 tile_src_rect.set_height(tile_height - tile_y_overflow);
             }
             blit(IntPoint(tile_x, tile_y), bitmap, tile_src_rect);
+        }
+    }
+}
+
+void Gfx::Painter::draw_ui_text(const StringView& text, const Gfx::IntRect& rect, const Gfx::Font& font, Gfx::Color color)
+{
+    auto parse_ampersand_string = [](const StringView& raw_text, Optional<size_t>& underline_offset) -> String {
+        if (raw_text.is_empty())
+            return String::empty();
+
+        StringBuilder builder;
+
+        for (size_t i = 0; i < raw_text.length(); ++i) {
+            if (raw_text[i] == '&') {
+                if (i != (raw_text.length() - 1) && raw_text[i + 1] == '&')
+                    builder.append(raw_text[i]);
+                else if (!underline_offset.has_value())
+                    underline_offset = i;
+                continue;
+            }
+            builder.append(raw_text[i]);
+        }
+        return builder.to_string();
+    };
+
+    Optional<size_t> underline_offset;
+    auto name_to_draw = parse_ampersand_string(text, underline_offset);
+
+    Gfx::IntRect text_rect { 0, 0, font.width(name_to_draw), font.glyph_height() };
+    text_rect.center_within(rect);
+
+    draw_text(text_rect, name_to_draw, font, Gfx::TextAlignment::CenterLeft, color);
+
+    if (underline_offset.has_value()) {
+        Utf8View utf8_view { name_to_draw };
+        int width = 0;
+        for (auto it = utf8_view.begin(); it != utf8_view.end(); ++it) {
+            if (utf8_view.byte_offset_of(it) >= underline_offset.value()) {
+                int y = text_rect.bottom() + 1;
+                int x1 = text_rect.left() + width;
+                int x2 = x1 + font.glyph_or_emoji_width(*it);
+                draw_line({ x1, y }, { x2, y }, Color::Black);
+                break;
+            }
+            width += font.glyph_or_emoji_width(*it);
         }
     }
 }

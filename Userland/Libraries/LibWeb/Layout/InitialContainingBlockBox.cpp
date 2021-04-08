@@ -48,7 +48,7 @@ void InitialContainingBlockBox::build_stacking_context_tree()
 
     set_stacking_context(make<StackingContext>(*this, nullptr));
 
-    for_each_in_subtree_of_type<Box>([&](Box& box) {
+    for_each_in_inclusive_subtree_of_type<Box>([&](Box& box) {
         if (&box == this)
             return IterationDecision::Continue;
         if (!box.establishes_stacking_context()) {
@@ -68,13 +68,8 @@ void InitialContainingBlockBox::paint_document_background(PaintContext& context)
     context.painter().translate(-context.viewport_rect().location());
 
     if (auto background_bitmap = document().background_image()) {
-        Gfx::IntRect background_rect {
-            0,
-            0,
-            context.viewport_rect().x() + context.viewport_rect().width(),
-            context.viewport_rect().y() + context.viewport_rect().height()
-        };
-        context.painter().blit_tiled(background_rect, *background_bitmap, background_bitmap->rect());
+        Gfx::IntRect background_rect = { 0, 0, context.viewport_rect().x() + context.viewport_rect().width(), context.viewport_rect().y() + context.viewport_rect().height() };
+        paint_background_image(context, *background_bitmap, document().background_repeat_x(), document().background_repeat_y(), move(background_rect));
     }
 }
 
@@ -106,7 +101,7 @@ void InitialContainingBlockBox::recompute_selection_states()
 
     auto selection = this->selection().normalized();
 
-    for_each_in_subtree([&](auto& layout_node) {
+    for_each_in_inclusive_subtree([&](auto& layout_node) {
         if (!selection.is_valid()) {
             // Everything gets SelectionState::None.
         } else if (&layout_node == selection.start().layout_node && &layout_node == selection.end().layout_node) {

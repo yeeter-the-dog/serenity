@@ -102,7 +102,7 @@ static size_t get_function_length(FunctionType& function)
 struct Type {
     String name;
     bool nullable { false };
-    bool is_string() const { return name.is_one_of("DOMString", "USVString", "CSSOMString"); }
+    bool is_string() const { return name.is_one_of("ByteString", "CSSOMString", "DOMString", "USVString"); }
 };
 
 struct Parameter {
@@ -1426,6 +1426,13 @@ JS_DEFINE_NATIVE_SETTER(@prototype_class@::@attribute.setter_callback@)
         function_generator.set("function.name", function.name);
         function_generator.set("function.name:snakecase", function.name.to_snakecase());
 
+        if (function.extended_attributes.contains("ImplementedAs")) {
+            auto implemented_as = function.extended_attributes.get("ImplementedAs").value();
+            function_generator.set("function.cpp_name", implemented_as);
+        } else {
+            function_generator.set("function.cpp_name", function.name.to_snakecase());
+        }
+
         function_generator.append(R"~~~(
 JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@function.name:snakecase@)
 {
@@ -1441,7 +1448,7 @@ JS_DEFINE_NATIVE_FUNCTION(@prototype_class@::@function.name:snakecase@)
         function_generator.set(".arguments", arguments_builder.string_view());
 
         function_generator.append(R"~~~(
-    auto retval = throw_dom_exception_if_needed(vm, global_object, [&] { return impl->@function.name:snakecase@(@.arguments@); });
+    auto retval = throw_dom_exception_if_needed(vm, global_object, [&] { return impl->@function.cpp_name@(@.arguments@); });
     if (should_return_empty(retval))
         return JS::Value();
 )~~~");

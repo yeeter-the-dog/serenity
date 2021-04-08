@@ -38,6 +38,7 @@
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLHeadElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
+#include <LibWeb/HTML/HTMLTableElement.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/Parser/HTMLDocumentParser.h>
 #include <LibWeb/HTML/Parser/HTMLToken.h>
@@ -457,17 +458,34 @@ NonnullRefPtr<DOM::Element> HTMLDocumentParser::create_element_for(const HTMLTok
     return element;
 }
 
-RefPtr<DOM::Element> HTMLDocumentParser::insert_foreign_element(const HTMLToken& token, const FlyString& namespace_)
+// https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element
+NonnullRefPtr<DOM::Element> HTMLDocumentParser::insert_foreign_element(const HTMLToken& token, const FlyString& namespace_)
 {
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
+
+    // FIXME: Pass in adjusted_insertion_location.parent as the intended parent.
     auto element = create_element_for(token, namespace_);
-    // FIXME: Check if it's possible to insert `element` at `adjusted_insertion_location`
-    adjusted_insertion_location.parent->insert_before(element, adjusted_insertion_location.insert_before_sibling);
+
+    auto pre_insertion_validity = adjusted_insertion_location.parent->ensure_pre_insertion_validity(element, adjusted_insertion_location.insert_before_sibling);
+
+    // NOTE: If it's not possible to insert the element at the adjusted insertion location, the element is simply dropped.
+    if (!pre_insertion_validity.is_exception()) {
+        if (!m_parsing_fragment) {
+            // FIXME: push a new element queue onto element's relevant agent's custom element reactions stack.
+        }
+
+        adjusted_insertion_location.parent->insert_before(element, adjusted_insertion_location.insert_before_sibling);
+
+        if (!m_parsing_fragment) {
+            // FIXME: pop the element queue from element's relevant agent's custom element reactions stack, and invoke custom element reactions in that queue.
+        }
+    }
+
     m_stack_of_open_elements.push(element);
     return element;
 }
 
-RefPtr<DOM::Element> HTMLDocumentParser::insert_html_element(const HTMLToken& token)
+NonnullRefPtr<DOM::Element> HTMLDocumentParser::insert_html_element(const HTMLToken& token)
 {
     return insert_foreign_element(token, Namespace::HTML);
 }
@@ -2873,6 +2891,7 @@ void HTMLDocumentParser::process_using_the_rules_for_foreign_content(HTMLToken& 
     VERIFY_NOT_REACHED();
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#reset-the-insertion-mode-appropriately
 void HTMLDocumentParser::reset_the_insertion_mode_appropriately()
 {
     for (ssize_t i = m_stack_of_open_elements.elements().size() - 1; i >= 0; --i) {
@@ -2886,7 +2905,22 @@ void HTMLDocumentParser::reset_the_insertion_mode_appropriately()
         }
 
         if (node->local_name() == HTML::TagNames::select) {
-            TODO();
+            if (!last) {
+                for (ssize_t j = i; j > 0; --j) {
+                    auto& ancestor = m_stack_of_open_elements.elements().at(j - 1);
+
+                    if (is<HTMLTemplateElement>(ancestor))
+                        break;
+
+                    if (is<HTMLTableElement>(ancestor)) {
+                        m_insertion_mode = InsertionMode::InSelectInTable;
+                        return;
+                    }
+                }
+            }
+
+            m_insertion_mode = InsertionMode::InSelect;
+            return;
         }
 
         if (!last && node->local_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th)) {

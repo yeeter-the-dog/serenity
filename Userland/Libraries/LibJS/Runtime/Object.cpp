@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -159,6 +160,80 @@ bool Object::prevent_extensions()
     return true;
 }
 
+// 7.3.15 SetIntegrityLevel, https://tc39.es/ecma262/#sec-setintegritylevel
+bool Object::set_integrity_level(IntegrityLevel level)
+{
+    // FIXME: This feels clunky and should get nicer abstractions.
+    auto update_property = [this](auto& key, auto attributes) {
+        auto property_name = PropertyName::from_value(global_object(), key);
+        auto metadata = shape().lookup(property_name.to_string_or_symbol());
+        VERIFY(metadata.has_value());
+        auto value = get_direct(metadata->offset);
+        define_property(property_name, value, metadata->attributes.bits() & attributes);
+    };
+
+    auto& vm = this->vm();
+    auto status = prevent_extensions();
+    if (vm.exception())
+        return false;
+    if (!status)
+        return false;
+    auto keys = get_own_properties(PropertyKind::Key);
+    if (vm.exception())
+        return false;
+    switch (level) {
+    case IntegrityLevel::Sealed:
+        for (auto& key : keys) {
+            update_property(key, ~Attribute::Configurable);
+            if (vm.exception())
+                return {};
+        }
+        break;
+    case IntegrityLevel::Frozen:
+        for (auto& key : keys) {
+            auto property_name = PropertyName::from_value(global_object(), key);
+            auto property_descriptor = get_own_property_descriptor(property_name);
+            VERIFY(property_descriptor.has_value());
+            u8 attributes = property_descriptor->is_accessor_descriptor()
+                ? ~Attribute::Configurable
+                : ~Attribute::Configurable & ~Attribute::Writable;
+            update_property(key, attributes);
+            if (vm.exception())
+                return {};
+        }
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+    return true;
+}
+
+// 7.3.16 TestIntegrityLevel, https://tc39.es/ecma262/#sec-testintegritylevel
+bool Object::test_integrity_level(IntegrityLevel level)
+{
+    auto& vm = this->vm();
+    auto extensible = is_extensible();
+    if (vm.exception())
+        return false;
+    if (extensible)
+        return false;
+    auto keys = get_own_properties(PropertyKind::Key);
+    if (vm.exception())
+        return false;
+    for (auto& key : keys) {
+        auto property_name = PropertyName::from_value(global_object(), key);
+        auto property_descriptor = get_own_property_descriptor(property_name);
+        VERIFY(property_descriptor.has_value());
+        if (property_descriptor->attributes.is_configurable())
+            return false;
+        if (level == IntegrityLevel::Frozen && property_descriptor->is_data_descriptor()) {
+            if (property_descriptor->attributes.is_writable())
+                return false;
+        }
+    }
+    return true;
+}
+
 Value Object::get_own_property(const PropertyName& property_name, Value receiver) const
 {
     VERIFY(property_name.is_valid());
@@ -186,80 +261,96 @@ Value Object::get_own_property(const PropertyName& property_name, Value receiver
     return value_here;
 }
 
-Value Object::get_own_properties(const Object& this_object, PropertyKind kind, bool only_enumerable_properties, GetOwnPropertyReturnType return_type) const
+MarkedValueList Object::get_own_properties(PropertyKind kind, bool only_enumerable_properties, GetOwnPropertyReturnType return_type) const
 {
-    auto* properties_array = Array::create(global_object());
+    MarkedValueList properties(heap());
 
     // FIXME: Support generic iterables
-    if (is<StringObject>(this_object)) {
-        auto str = static_cast<const StringObject&>(this_object).primitive_string().string();
+    if (is<StringObject>(*this)) {
+        auto str = static_cast<const StringObject&>(*this).primitive_string().string();
 
         for (size_t i = 0; i < str.length(); ++i) {
             if (kind == PropertyKind::Key) {
-                properties_array->define_property(i, js_string(vm(), String::number(i)));
+                properties.append(js_string(vm(), String::number(i)));
             } else if (kind == PropertyKind::Value) {
-                properties_array->define_property(i, js_string(vm(), String::formatted("{:c}", str[i])));
+                properties.append(js_string(vm(), String::formatted("{:c}", str[i])));
             } else {
                 auto* entry_array = Array::create(global_object());
                 entry_array->define_property(0, js_string(vm(), String::number(i)));
                 entry_array->define_property(1, js_string(vm(), String::formatted("{:c}", str[i])));
-                properties_array->define_property(i, entry_array);
+                properties.append(entry_array);
             }
             if (vm().exception())
-                return {};
+                return MarkedValueList { heap() };
         }
 
-        return properties_array;
+        return properties;
     }
 
-    size_t property_index = 0;
     for (auto& entry : m_indexed_properties) {
-        auto value_and_attributes = entry.value_and_attributes(const_cast<Object*>(&this_object));
+        auto value_and_attributes = entry.value_and_attributes(const_cast<Object*>(this));
         if (only_enumerable_properties && !value_and_attributes.attributes.is_enumerable())
             continue;
 
         if (kind == PropertyKind::Key) {
-            properties_array->define_property(property_index, js_string(vm(), String::number(entry.index())));
+            properties.append(js_string(vm(), String::number(entry.index())));
         } else if (kind == PropertyKind::Value) {
-            properties_array->define_property(property_index, value_and_attributes.value);
+            properties.append(value_and_attributes.value);
         } else {
             auto* entry_array = Array::create(global_object());
             entry_array->define_property(0, js_string(vm(), String::number(entry.index())));
             entry_array->define_property(1, value_and_attributes.value);
-            properties_array->define_property(property_index, entry_array);
+            properties.append(entry_array);
         }
         if (vm().exception())
-            return {};
-
-        ++property_index;
+            return MarkedValueList { heap() };
     }
 
-    for (auto& it : this_object.shape().property_table_ordered()) {
-        if (only_enumerable_properties && !it.value.attributes.is_enumerable())
-            continue;
-
-        if (return_type == GetOwnPropertyReturnType::StringOnly && it.key.is_symbol())
-            continue;
-        if (return_type == GetOwnPropertyReturnType::SymbolOnly && it.key.is_string())
-            continue;
-
+    auto add_property_to_results = [&](auto& property) {
         if (kind == PropertyKind::Key) {
-            properties_array->define_property(property_index, it.key.to_value(vm()));
+            properties.append(property.key.to_value(vm()));
         } else if (kind == PropertyKind::Value) {
-            properties_array->define_property(property_index, this_object.get(it.key));
+            properties.append(get(property.key));
         } else {
             auto* entry_array = Array::create(global_object());
-            entry_array->define_property(0, it.key.to_value(vm()));
-            entry_array->define_property(1, this_object.get(it.key));
-            properties_array->define_property(property_index, entry_array);
+            entry_array->define_property(0, property.key.to_value(vm()));
+            entry_array->define_property(1, get(property.key));
+            properties.append(entry_array);
         }
-        if (vm().exception())
-            return {};
+    };
 
-        ++property_index;
+    // NOTE: Most things including for..in/of and Object.{keys,values,entries}() use StringOnly, and in those
+    // cases we won't be iterating the ordered property table twice. We can certainly improve this though.
+    if (return_type == GetOwnPropertyReturnType::All || return_type == GetOwnPropertyReturnType::StringOnly) {
+        for (auto& it : shape().property_table_ordered()) {
+            if (only_enumerable_properties && !it.value.attributes.is_enumerable())
+                continue;
+            if (it.key.is_symbol())
+                continue;
+            add_property_to_results(it);
+            if (vm().exception())
+                return MarkedValueList { heap() };
+        }
+    }
+    if (return_type == GetOwnPropertyReturnType::All || return_type == GetOwnPropertyReturnType::SymbolOnly) {
+        for (auto& it : shape().property_table_ordered()) {
+            if (only_enumerable_properties && !it.value.attributes.is_enumerable())
+                continue;
+            if (it.key.is_string())
+                continue;
+            add_property_to_results(it);
+            if (vm().exception())
+                return MarkedValueList { heap() };
+        }
     }
 
-    return properties_array;
+    return properties;
+}
+
+// 7.3.23 EnumerableOwnPropertyNames, https://tc39.es/ecma262/#sec-enumerableownpropertynames
+MarkedValueList Object::get_enumerable_own_property_names(PropertyKind kind) const
+{
+    return get_own_properties(kind, true, Object::GetOwnPropertyReturnType::StringOnly);
 }
 
 Optional<PropertyDescriptor> Object::get_own_property_descriptor(const PropertyName& property_name) const
@@ -437,14 +528,14 @@ bool Object::define_property(const PropertyName& property_name, Value value, Pro
     VERIFY(property_name.is_valid());
 
     if (property_name.is_number())
-        return put_own_property_by_index(*this, property_name.as_number(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
+        return put_own_property_by_index(property_name.as_number(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
 
     if (property_name.is_string()) {
         i32 property_index = property_name.as_string().to_int().value_or(-1);
         if (property_index >= 0)
-            return put_own_property_by_index(*this, property_index, value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
+            return put_own_property_by_index(property_index, value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
     }
-    return put_own_property(*this, property_name.to_string_or_symbol(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
+    return put_own_property(property_name.to_string_or_symbol(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
 }
 
 bool Object::define_accessor(const PropertyName& property_name, Function& getter_or_setter, bool is_getter, PropertyAttributes attributes, bool throw_exceptions)
@@ -474,7 +565,7 @@ bool Object::define_accessor(const PropertyName& property_name, Function& getter
     return true;
 }
 
-bool Object::put_own_property(Object& this_object, const StringOrSymbol& property_name, Value value, PropertyAttributes attributes, PutOwnPropertyMode mode, bool throw_exceptions)
+bool Object::put_own_property(const StringOrSymbol& property_name, Value value, PropertyAttributes attributes, PutOwnPropertyMode mode, bool throw_exceptions)
 {
     VERIFY(!(mode == PutOwnPropertyMode::Put && value.is_accessor()));
 
@@ -561,14 +652,14 @@ bool Object::put_own_property(Object& this_object, const StringOrSymbol& propert
         return true;
 
     if (value_here.is_native_property()) {
-        call_native_property_setter(value_here.as_native_property(), &this_object, value);
+        call_native_property_setter(value_here.as_native_property(), this, value);
     } else {
         m_storage[metadata.value().offset] = value;
     }
     return true;
 }
 
-bool Object::put_own_property_by_index(Object& this_object, u32 property_index, Value value, PropertyAttributes attributes, PutOwnPropertyMode mode, bool throw_exceptions)
+bool Object::put_own_property_by_index(u32 property_index, Value value, PropertyAttributes attributes, PutOwnPropertyMode mode, bool throw_exceptions)
 {
     VERIFY(!(mode == PutOwnPropertyMode::Put && value.is_accessor()));
 
@@ -615,9 +706,9 @@ bool Object::put_own_property_by_index(Object& this_object, u32 property_index, 
         return true;
 
     if (value_here.is_native_property()) {
-        call_native_property_setter(value_here.as_native_property(), &this_object, value);
+        call_native_property_setter(value_here.as_native_property(), this, value);
     } else {
-        m_indexed_properties.put(&this_object, property_index, value, attributes, mode == PutOwnPropertyMode::Put);
+        m_indexed_properties.put(this, property_index, value, attributes, mode == PutOwnPropertyMode::Put);
     }
     return true;
 }
@@ -740,7 +831,7 @@ bool Object::put_by_index(u32 property_index, Value value)
         if (vm().exception())
             return {};
     }
-    return put_own_property_by_index(*this, property_index, value, default_attributes, PutOwnPropertyMode::Put);
+    return put_own_property_by_index(property_index, value, default_attributes, PutOwnPropertyMode::Put);
 }
 
 bool Object::put(const PropertyName& property_name, Value value, Value receiver)
@@ -784,7 +875,7 @@ bool Object::put(const PropertyName& property_name, Value value, Value receiver)
         if (vm().exception())
             return false;
     }
-    return put_own_property(*this, string_or_symbol, value, default_attributes, PutOwnPropertyMode::Put);
+    return put_own_property(string_or_symbol, value, default_attributes, PutOwnPropertyMode::Put);
 }
 
 bool Object::define_native_function(const StringOrSymbol& property_name, AK::Function<Value(VM&, GlobalObject&)> native_function, i32 length, PropertyAttributes attribute)
