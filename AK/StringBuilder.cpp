@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/ByteBuffer.h>
@@ -38,26 +18,21 @@ namespace AK {
 
 inline void StringBuilder::will_append(size_t size)
 {
-    Checked<size_t> needed_capacity = m_length;
+    Checked<size_t> needed_capacity = m_buffer.size();
     needed_capacity += size;
     VERIFY(!needed_capacity.has_overflow());
-    if (needed_capacity < inline_capacity)
+    // Prefer to completely use the existing capacity first
+    if (needed_capacity <= m_buffer.capacity())
         return;
     Checked<size_t> expanded_capacity = needed_capacity;
     expanded_capacity *= 2;
     VERIFY(!expanded_capacity.has_overflow());
-    if (m_buffer.is_null()) {
-        m_buffer.grow(expanded_capacity.value());
-        memcpy(m_buffer.data(), m_inline_buffer, m_length);
-    } else if (needed_capacity.value() > m_buffer.size()) {
-        m_buffer.grow(expanded_capacity.value());
-    }
+    m_buffer.ensure_capacity(expanded_capacity.value());
 }
 
 StringBuilder::StringBuilder(size_t initial_capacity)
 {
-    if (initial_capacity > inline_capacity)
-        m_buffer.grow(initial_capacity);
+    m_buffer.ensure_capacity(initial_capacity);
 }
 
 void StringBuilder::append(const StringView& str)
@@ -65,8 +40,7 @@ void StringBuilder::append(const StringView& str)
     if (str.is_empty())
         return;
     will_append(str.length());
-    memcpy(data() + m_length, str.characters_without_null_termination(), str.length());
-    m_length += str.length();
+    m_buffer.append(str.characters_without_null_termination(), str.length());
 }
 
 void StringBuilder::append(const char* characters, size_t length)
@@ -77,8 +51,7 @@ void StringBuilder::append(const char* characters, size_t length)
 void StringBuilder::append(char ch)
 {
     will_append(1);
-    data()[m_length] = ch;
-    m_length += 1;
+    m_buffer.append(&ch, 1);
 }
 
 void StringBuilder::appendvf(const char* fmt, va_list ap)
@@ -87,15 +60,6 @@ void StringBuilder::appendvf(const char* fmt, va_list ap)
         append(ch);
     },
         nullptr, fmt, ap);
-}
-
-void StringBuilder::appendf(const char* fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    will_append(strlen(fmt));
-    appendvf(fmt, ap);
-    va_end(ap);
 }
 
 ByteBuffer StringBuilder::to_byte_buffer() const
@@ -117,14 +81,12 @@ String StringBuilder::build() const
 
 StringView StringBuilder::string_view() const
 {
-    return StringView { data(), m_length };
+    return StringView { data(), m_buffer.size() };
 }
 
 void StringBuilder::clear()
 {
     m_buffer.clear();
-    m_inline_buffer[0] = '\0';
-    m_length = 0;
 }
 
 void StringBuilder::append_code_point(u32 code_point)
@@ -156,6 +118,14 @@ void StringBuilder::append(const Utf32View& utf32_view)
         auto code_point = utf32_view.code_points()[i];
         append_code_point(code_point);
     }
+}
+
+void StringBuilder::append_as_lowercase(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z')
+        append(ch + 0x20);
+    else
+        append(ch);
 }
 
 void StringBuilder::append_escaped_for_json(const StringView& string)

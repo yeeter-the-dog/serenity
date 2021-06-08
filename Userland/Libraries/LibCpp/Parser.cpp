@@ -1,32 +1,8 @@
 /*
  * Copyright (c) 2021, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
-
-#ifdef CPP_DEBUG
-#    define DEBUG_SPAM
-#endif
 
 #include "Parser.h"
 #include "AST.h"
@@ -38,21 +14,16 @@
 namespace Cpp {
 
 Parser::Parser(const StringView& program, const String& filename, Preprocessor::Definitions&& definitions)
-    : m_definitions(move(definitions))
+    : m_preprocessor_definitions(move(definitions))
     , m_filename(filename)
 {
     initialize_program_tokens(program);
-#if CPP_DEBUG
-    dbgln("Tokens:");
-    for (auto& token : m_tokens) {
-        StringView text;
-        if (token.start().line != token.end().line || token.start().column > token.end().column)
-            text = {};
-        else
-            text = text_of_token(token);
-        dbgln("{}  {}:{}-{}:{} ({})", token.to_string(), token.start().line, token.start().column, token.end().line, token.end().column, text);
+    if constexpr (CPP_DEBUG) {
+        dbgln("Tokens:");
+        for (auto& token : m_tokens) {
+            dbgln("{}", token.to_string());
+        }
     }
-#endif
 }
 
 void Parser::initialize_program_tokens(const StringView& program)
@@ -62,7 +33,7 @@ void Parser::initialize_program_tokens(const StringView& program)
         if (token.type() == Token::Type::Whitespace)
             continue;
         if (token.type() == Token::Type::Identifier) {
-            if (auto defined_value = m_definitions.find(text_of_token(token)); defined_value != m_definitions.end()) {
+            if (auto defined_value = m_preprocessor_definitions.find(text_of_token(token)); defined_value != m_preprocessor_definitions.end()) {
                 add_tokens_for_preprocessor(token, defined_value->value);
                 m_replaced_preprocessor_tokens.append({ token, defined_value->value });
                 continue;
@@ -74,7 +45,7 @@ void Parser::initialize_program_tokens(const StringView& program)
 
 NonnullRefPtr<TranslationUnit> Parser::parse()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     if (m_tokens.is_empty())
         return create_root_ast_node({}, {});
     auto unit = create_root_ast_node(m_tokens.first().start(), m_tokens.last().end());
@@ -128,6 +99,8 @@ NonnullRefPtr<Declaration> Parser::parse_declaration(ASTNode& parent, Declaratio
         return parse_variable_declaration(parent);
     case DeclarationType::Enum:
         return parse_enum_declaration(parent);
+    case DeclarationType::Class:
+        return parse_struct_or_class_declaration(parent, StructOrClassDeclaration::Type::Class);
     case DeclarationType::Struct:
         return parse_struct_or_class_declaration(parent, StructOrClassDeclaration::Type::Struct);
     case DeclarationType::Namespace:
@@ -174,7 +147,7 @@ NonnullRefPtr<FunctionDeclaration> Parser::parse_function_declaration(ASTNode& p
 
 NonnullRefPtr<FunctionDefinition> Parser::parse_function_definition(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto func = create_ast_node<FunctionDefinition>(parent, position(), {});
     consume(Token::Type::LeftCurly);
     while (!eof() && peek().type() != Token::Type::RightCurly) {
@@ -188,7 +161,7 @@ NonnullRefPtr<FunctionDefinition> Parser::parse_function_definition(ASTNode& par
 
 NonnullRefPtr<Statement> Parser::parse_statement(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     ArmedScopeGuard consume_semicolon([this]() {
         consume(Token::Type::Semicolon);
     });
@@ -240,7 +213,7 @@ bool Parser::match_block_statement()
 
 NonnullRefPtr<BlockStatement> Parser::parse_block_statement(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto block_statement = create_ast_node<BlockStatement>(parent, position(), {});
     consume(Token::Type::LeftCurly);
     while (!eof() && peek().type() != Token::Type::RightCurly) {
@@ -257,6 +230,10 @@ bool Parser::match_type()
     ScopeGuard state_guard = [this] { load_state(); };
 
     parse_type_qualifiers();
+    if (match_keyword("auto")) {
+        return true;
+    }
+
     if (match_keyword("struct")) {
         consume(Token::Type::Keyword); // Consume struct prefix
     }
@@ -287,7 +264,7 @@ bool Parser::match_template_arguments()
 
 NonnullRefPtrVector<Type> Parser::parse_template_arguments(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
 
     consume(Token::Type::Less);
 
@@ -303,7 +280,7 @@ NonnullRefPtrVector<Type> Parser::parse_template_arguments(ASTNode& parent)
 
 bool Parser::match_variable_declaration()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     save_state();
     ScopeGuard state_guard = [this] { load_state(); };
 
@@ -334,7 +311,7 @@ bool Parser::match_variable_declaration()
 
 NonnullRefPtr<VariableDeclaration> Parser::parse_variable_declaration(ASTNode& parent, bool expect_semicolon)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto var = create_ast_node<VariableDeclaration>(parent, position(), {});
     if (!match_variable_declaration()) {
         error("unexpected token for variable type");
@@ -362,7 +339,7 @@ NonnullRefPtr<VariableDeclaration> Parser::parse_variable_declaration(ASTNode& p
 
 NonnullRefPtr<Expression> Parser::parse_expression(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto expression = parse_primary_expression(parent);
     // TODO: remove eof() logic, should still work without it
     if (eof() || match(Token::Type::Semicolon)) {
@@ -424,7 +401,7 @@ bool Parser::match_secondary_expression()
 
 NonnullRefPtr<Expression> Parser::parse_primary_expression(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     // TODO: remove eof() logic, should still work without it
     if (eof()) {
         auto node = create_ast_node<Identifier>(parent, position(), position());
@@ -554,7 +531,7 @@ NonnullRefPtr<Expression> Parser::parse_literal(ASTNode& parent)
 
 NonnullRefPtr<Expression> Parser::parse_secondary_expression(ASTNode& parent, NonnullRefPtr<Expression> lhs)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     switch (peek().type()) {
     case Token::Type::Plus:
         return parse_binary_expression(parent, lhs, BinaryOp::Addition);
@@ -640,6 +617,8 @@ Optional<Parser::DeclarationType> Parser::match_declaration_in_translation_unit(
         return DeclarationType::Function;
     if (match_enum_declaration())
         return DeclarationType::Enum;
+    if (match_class_declaration())
+        return DeclarationType::Class;
     if (match_struct_declaration())
         return DeclarationType::Struct;
     if (match_namespace_declaration())
@@ -652,6 +631,11 @@ Optional<Parser::DeclarationType> Parser::match_declaration_in_translation_unit(
 bool Parser::match_enum_declaration()
 {
     return match_keyword("enum");
+}
+
+bool Parser::match_class_declaration()
+{
+    return match_keyword("class");
 }
 
 bool Parser::match_struct_declaration()
@@ -700,7 +684,7 @@ bool Parser::match_function_declaration()
 
 Optional<NonnullRefPtrVector<Parameter>> Parser::parse_parameter_list(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     NonnullRefPtrVector<Parameter> parameters;
     while (peek().type() != Token::Type::RightParen && !eof()) {
         if (match_ellipsis()) {
@@ -750,7 +734,7 @@ bool Parser::match_preprocessor()
 
 void Parser::consume_preprocessor()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     switch (peek().type()) {
     case Token::Type::PreprocessorStatement:
         consume();
@@ -767,7 +751,7 @@ void Parser::consume_preprocessor()
 
 Optional<Token> Parser::consume_whitespace()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     return consume(Token::Type::Whitespace);
 }
 
@@ -843,7 +827,7 @@ String Parser::text_in_range(Position start, Position end) const
 
 void Parser::error(StringView message)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     if (message.is_null() || message.is_empty())
         message = "<empty>";
     String formatted_message;
@@ -862,9 +846,8 @@ void Parser::error(StringView message)
 
 bool Parser::match_expression()
 {
-    auto token_type = peek().type();
     return match_literal()
-        || token_type == Token::Type::Identifier
+        || match_name()
         || match_unary_expression()
         || match_cpp_cast_expression()
         || match_c_style_cast_expression()
@@ -914,7 +897,7 @@ Optional<size_t> Parser::index_of_node_at(Position pos) const
         if (node.start() > pos || node.end() < pos)
             continue;
 
-        if (!match_node_index.has_value() || (node_span(node) < node_span(m_state.nodes[match_node_index.value()])))
+        if (!match_node_index.has_value() || (node_span(node) <= node_span(m_state.nodes[match_node_index.value()])))
             match_node_index = node_index;
     }
     return match_node_index;
@@ -942,13 +925,13 @@ Optional<size_t> Parser::index_of_token_at(Position pos) const
 void Parser::print_tokens() const
 {
     for (auto& token : m_tokens) {
-        dbgln("{}", token.to_string());
+        outln("{}", token.to_string());
     }
 }
 
 NonnullRefPtr<StringLiteral> Parser::parse_string_literal(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     Optional<size_t> start_token_index;
     Optional<size_t> end_token_index;
     while (!eof()) {
@@ -982,7 +965,7 @@ NonnullRefPtr<StringLiteral> Parser::parse_string_literal(ASTNode& parent)
 
 NonnullRefPtr<ReturnStatement> Parser::parse_return_statement(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto return_statement = create_ast_node<ReturnStatement>(parent, position(), {});
     consume(Token::Type::Keyword);
     if (!peek(Token::Type::Semicolon).has_value()) {
@@ -995,7 +978,7 @@ NonnullRefPtr<ReturnStatement> Parser::parse_return_statement(ASTNode& parent)
 
 NonnullRefPtr<EnumDeclaration> Parser::parse_enum_declaration(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto enum_decl = create_ast_node<EnumDeclaration>(parent, position(), {});
     consume_keyword("enum");
     auto name_token = consume(Token::Type::Identifier);
@@ -1042,7 +1025,7 @@ bool Parser::match_keyword(const String& keyword)
 
 NonnullRefPtr<StructOrClassDeclaration> Parser::parse_struct_or_class_declaration(ASTNode& parent, StructOrClassDeclaration::Type type)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto decl = create_ast_node<StructOrClassDeclaration>(parent, position(), {}, type);
     switch (type) {
     case StructOrClassDeclaration::Type::Struct:
@@ -1069,7 +1052,7 @@ NonnullRefPtr<StructOrClassDeclaration> Parser::parse_struct_or_class_declaratio
 
 NonnullRefPtr<MemberDeclaration> Parser::parse_member_declaration(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto member_decl = create_ast_node<MemberDeclaration>(parent, position(), {});
     member_decl->m_type = parse_type(*member_decl);
 
@@ -1088,7 +1071,7 @@ NonnullRefPtr<MemberDeclaration> Parser::parse_member_declaration(ASTNode& paren
 
 NonnullRefPtr<BooleanLiteral> Parser::parse_boolean_literal(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto token = consume(Token::Type::Keyword);
     auto text = text_of_token(token);
     // text == "true" || text == "false";
@@ -1107,7 +1090,7 @@ bool Parser::match_boolean_literal()
 
 NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
 
     if (!match_type()) {
         auto token = consume();
@@ -1119,16 +1102,22 @@ NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
     auto qualifiers = parse_type_qualifiers();
     type->m_qualifiers = move(qualifiers);
 
-    if (match_keyword("struct")) {
-        consume(Token::Type::Keyword); // Consume struct prefix
-    }
+    if (match_keyword("auto")) {
+        consume(Token::Type::Keyword);
+        type->m_is_auto = true;
+    } else {
 
-    if (!match_name()) {
-        type->set_end(position());
-        error(String::formatted("expected name instead of: {}", peek().text()));
-        return type;
+        if (match_keyword("struct")) {
+            consume(Token::Type::Keyword); // Consume struct prefix
+        }
+
+        if (!match_name()) {
+            type->set_end(position());
+            error(String::formatted("expected name instead of: {}", peek().text()));
+            return type;
+        }
+        type->m_name = parse_name(*type);
     }
-    type->m_name = parse_name(*type);
 
     while (!eof() && peek().type() == Token::Type::Asterisk) {
         type->set_end(position());
@@ -1145,7 +1134,7 @@ NonnullRefPtr<Type> Parser::parse_type(ASTNode& parent)
 
 NonnullRefPtr<ForStatement> Parser::parse_for_statement(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto for_statement = create_ast_node<ForStatement>(parent, position(), {});
     consume(Token::Type::Keyword);
     consume(Token::Type::LeftParen);
@@ -1169,7 +1158,7 @@ NonnullRefPtr<ForStatement> Parser::parse_for_statement(ASTNode& parent)
 
 NonnullRefPtr<IfStatement> Parser::parse_if_statement(ASTNode& parent)
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     auto if_statement = create_ast_node<IfStatement>(parent, position(), {});
     consume(Token::Type::Keyword);
     consume(Token::Type::LeftParen);
@@ -1187,7 +1176,7 @@ NonnullRefPtr<IfStatement> Parser::parse_if_statement(ASTNode& parent)
 }
 Vector<StringView> Parser::parse_type_qualifiers()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     Vector<StringView> qualifiers;
     while (!eof()) {
         auto token = peek();
@@ -1206,7 +1195,7 @@ Vector<StringView> Parser::parse_type_qualifiers()
 
 Vector<StringView> Parser::parse_function_qualifiers()
 {
-    SCOPE_LOGGER();
+    ScopeLogger<CPP_DEBUG> logger;
     Vector<StringView> qualifiers;
     while (!eof()) {
         auto token = peek();
@@ -1306,17 +1295,19 @@ bool Parser::match_name()
 NonnullRefPtr<Name> Parser::parse_name(ASTNode& parent)
 {
     NonnullRefPtr<Name> name_node = create_ast_node<Name>(parent, position(), {});
-    while (!eof() && (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType)) {
+    while (!eof() && (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType) && peek(1).type() == Token::Type::ColonColon) {
         auto token = consume();
         name_node->m_scope.append(create_ast_node<Identifier>(*name_node, token.start(), token.end(), token.text()));
-        if (peek().type() == Token::Type::ColonColon)
-            consume();
-        else
-            break;
+        consume(Token::Type::ColonColon);
     }
 
-    VERIFY(!name_node->m_scope.is_empty());
-    name_node->m_name = name_node->m_scope.take_last();
+    if (peek().type() == Token::Type::Identifier || peek().type() == Token::Type::KnownType) {
+        auto token = consume();
+        name_node->m_name = create_ast_node<Identifier>(*name_node, token.start(), token.end(), token.text());
+    } else {
+        name_node->set_end(position());
+        return name_node;
+    }
 
     if (match_template_arguments()) {
         consume(Token::Type::Less);

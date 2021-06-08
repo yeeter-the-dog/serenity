@@ -8,6 +8,7 @@ set(SOURCES
     ClassicStylePainter.cpp
     ClassicWindowTheme.cpp
     Color.cpp
+    DDSLoader.cpp
     DisjointRectSet.cpp
     Emoji.cpp
     FontDatabase.cpp
@@ -29,6 +30,7 @@ set(SOURCES
     Size.cpp
     StylePainter.cpp
     SystemTheme.cpp
+    TextDirection.cpp
     Triangle.cpp
     Typeface.cpp
     WindowTheme.cpp

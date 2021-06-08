@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Demangle.h>
@@ -41,6 +21,7 @@
 #include <Kernel/KSyms.h>
 #include <Kernel/Module.h>
 #include <Kernel/PerformanceEventBuffer.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/RTC.h>
 #include <Kernel/StdLib.h>
@@ -59,7 +40,7 @@ static void create_signal_trampoline();
 
 RecursiveSpinLock g_processes_lock;
 static Atomic<pid_t> next_pid;
-READONLY_AFTER_INIT InlineLinkedList<Process>* g_processes;
+READONLY_AFTER_INIT Process::List* g_processes;
 READONLY_AFTER_INIT String* g_hostname;
 READONLY_AFTER_INIT Lock* g_hostname_lock;
 READONLY_AFTER_INIT HashMap<String, OwnPtr<Module>>* g_modules;
@@ -80,8 +61,8 @@ UNMAP_AFTER_INIT void Process::initialize()
     g_modules = new HashMap<String, OwnPtr<Module>>;
 
     next_pid.store(0, AK::MemoryOrder::memory_order_release);
-    g_processes = new InlineLinkedList<Process>;
-    g_process_groups = new InlineLinkedList<ProcessGroup>;
+    g_processes = new Process::List();
+    g_process_groups = new ProcessGroup::List();
     g_hostname = new String("courage");
     g_hostname_lock = new Lock;
 
@@ -92,7 +73,7 @@ Vector<ProcessID> Process::all_pids()
 {
     Vector<ProcessID> pids;
     ScopedSpinLock lock(g_processes_lock);
-    pids.ensure_capacity((int)g_processes->size_slow());
+    pids.ensure_capacity(g_processes->size_slow());
     for (auto& process : *g_processes)
         pids.append(process.pid());
     return pids;
@@ -102,7 +83,7 @@ NonnullRefPtrVector<Process> Process::all_processes()
 {
     NonnullRefPtrVector<Process> processes;
     ScopedSpinLock lock(g_processes_lock);
-    processes.ensure_capacity((int)g_processes->size_slow());
+    processes.ensure_capacity(g_processes->size_slow());
     for (auto& process : *g_processes)
         processes.append(NonnullRefPtr<Process>(process));
     return processes;
@@ -122,15 +103,16 @@ void Process::kill_threads_except_self()
 
     auto current_thread = Thread::current();
     for_each_thread([&](Thread& thread) {
-        if (&thread == current_thread
-            || thread.state() == Thread::State::Dead
-            || thread.state() == Thread::State::Dying)
-            return IterationDecision::Continue;
+        if (&thread == current_thread)
+            return;
+
+        if (auto state = thread.state(); state == Thread::State::Dead
+            || state == Thread::State::Dying)
+            return;
 
         // We need to detach this thread in case it hasn't been joined
         thread.detach();
         thread.set_should_die();
-        return IterationDecision::Continue;
     });
 
     big_lock().clear_waiters();
@@ -142,7 +124,6 @@ void Process::kill_all_threads()
         // We need to detach this thread in case it hasn't been joined
         thread.detach();
         thread.set_should_die();
-        return IterationDecision::Continue;
     });
 }
 
@@ -163,10 +144,13 @@ RefPtr<Process> Process::create_user_process(RefPtr<Thread>& first_thread, const
     if (!cwd)
         cwd = VFS::the().root_custody();
 
-    auto process = adopt(*new Process(first_thread, parts.take_last(), uid, gid, parent_pid, false, move(cwd), nullptr, tty));
+    auto process = Process::create(first_thread, parts.take_last(), uid, gid, parent_pid, false, move(cwd), nullptr, tty);
     if (!first_thread)
         return {};
-    process->m_fds.resize(m_max_open_file_descriptors);
+    if (!process->m_fds.try_resize(m_max_open_file_descriptors)) {
+        first_thread = nullptr;
+        return {};
+    }
     auto& device_to_use_as_tty = tty ? (CharacterDevice&)*tty : NullDevice::the();
     auto description = device_to_use_as_tty.open(O_RDWR).value();
     process->m_fds[0].set(*description);
@@ -181,9 +165,9 @@ RefPtr<Process> Process::create_user_process(RefPtr<Thread>& first_thread, const
     }
 
     {
-        ScopedSpinLock lock(g_processes_lock);
-        g_processes->prepend(process);
         process->ref();
+        ScopedSpinLock lock(g_processes_lock);
+        g_processes->prepend(*process);
     }
     error = 0;
     return process;
@@ -191,16 +175,16 @@ RefPtr<Process> Process::create_user_process(RefPtr<Thread>& first_thread, const
 
 RefPtr<Process> Process::create_kernel_process(RefPtr<Thread>& first_thread, String&& name, void (*entry)(void*), void* entry_data, u32 affinity)
 {
-    auto process = adopt(*new Process(first_thread, move(name), (uid_t)0, (gid_t)0, ProcessID(0), true));
-    if (!first_thread)
+    auto process = Process::create(first_thread, move(name), (uid_t)0, (gid_t)0, ProcessID(0), true);
+    if (!first_thread || !process)
         return {};
     first_thread->tss().eip = (FlatPtr)entry;
     first_thread->tss().esp = FlatPtr(entry_data); // entry function argument is expected to be in tss.esp
 
     if (process->pid() != 0) {
-        ScopedSpinLock lock(g_processes_lock);
-        g_processes->prepend(process);
         process->ref();
+        ScopedSpinLock lock(g_processes_lock);
+        g_processes->prepend(*process);
     }
 
     ScopedSpinLock lock(g_scheduler_lock);
@@ -219,7 +203,18 @@ void Process::unprotect_data()
     MM.set_page_writable_direct(VirtualAddress { this }, true);
 }
 
-Process::Process(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty, Process* fork_parent)
+RefPtr<Process> Process::create(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty, Process* fork_parent)
+{
+    auto process = adopt_ref_if_nonnull(new Process(name, uid, gid, ppid, is_kernel_process, move(cwd), move(executable), tty));
+    if (!process)
+        return {};
+    auto result = process->attach_resources(first_thread, fork_parent);
+    if (result.is_error())
+        return {};
+    return process;
+}
+
+Process::Process(const String& name, uid_t uid, gid_t gid, ProcessID ppid, bool is_kernel_process, RefPtr<Custody> cwd, RefPtr<Custody> executable, TTY* tty)
     : m_name(move(name))
     , m_is_kernel_process(is_kernel_process)
     , m_executable(move(executable))
@@ -240,19 +235,28 @@ Process::Process(RefPtr<Thread>& first_thread, const String& name, uid_t uid, gi
     m_sgid = gid;
 
     dbgln_if(PROCESS_DEBUG, "Created new process {}({})", m_name, this->pid().value());
+}
 
+KResult Process::attach_resources(RefPtr<Thread>& first_thread, Process* fork_parent)
+{
     m_space = Space::create(*this, fork_parent ? &fork_parent->space() : nullptr);
+    if (!m_space)
+        return ENOMEM;
 
     if (fork_parent) {
         // NOTE: fork() doesn't clone all threads; the thread that called fork() becomes the only thread in the new process.
         first_thread = Thread::current()->clone(*this);
+        if (!first_thread)
+            return ENOMEM;
     } else {
         // NOTE: This non-forked code path is only taken when the kernel creates a process "manually" (at boot.)
         auto thread_or_error = Thread::try_create(*this);
-        VERIFY(!thread_or_error.is_error());
+        if (thread_or_error.is_error())
+            return thread_or_error.error();
         first_thread = thread_or_error.release_value();
         first_thread->detach();
     }
+    return KSuccess;
 }
 
 Process::~Process()
@@ -262,15 +266,17 @@ Process::~Process()
     VERIFY(thread_count() == 0); // all threads should have been finalized
     VERIFY(!m_alarm_timer);
 
+    PerformanceManager::add_process_exit_event(*this);
+
     {
-        ScopedSpinLock processses_lock(g_processes_lock);
-        if (prev() || next())
-            g_processes->remove(this);
+        ScopedSpinLock processes_lock(g_processes_lock);
+        if (m_list_node.is_in_list())
+            g_processes->remove(*this);
     }
 }
 
 // Make sure the compiler doesn't "optimize away" this function:
-extern void signal_trampoline_dummy();
+extern void signal_trampoline_dummy() __attribute__((used));
 void signal_trampoline_dummy()
 {
 #if ARCH(I386)
@@ -301,7 +307,7 @@ void signal_trampoline_dummy()
 #endif
 }
 
-extern "C" void asm_signal_trampoline(void);
+extern "C" void asm_signal_trampoline(void) __attribute__((used));
 extern "C" void asm_signal_trampoline_end(void);
 
 void create_signal_trampoline()
@@ -428,19 +434,19 @@ Custody& Process::current_directory()
     return *m_cwd;
 }
 
-KResultOr<String> Process::get_syscall_path_argument(const char* user_path, size_t path_length) const
+KResultOr<NonnullOwnPtr<KString>> Process::get_syscall_path_argument(char const* user_path, size_t path_length) const
 {
     if (path_length == 0)
         return EINVAL;
     if (path_length > PATH_MAX)
         return ENAMETOOLONG;
-    auto copied_string = copy_string_from_user(user_path, path_length);
-    if (copied_string.is_null())
-        return EFAULT;
-    return copied_string;
+    auto string_or_error = try_copy_kstring_from_user(user_path, path_length);
+    if (string_or_error.is_error())
+        return string_or_error.error();
+    return string_or_error.release_value();
 }
 
-KResultOr<String> Process::get_syscall_path_argument(const Syscall::StringArgument& path) const
+KResultOr<NonnullOwnPtr<KString>> Process::get_syscall_path_argument(Syscall::StringArgument const& path) const
 {
     return get_syscall_path_argument(path.characters, path.length);
 }
@@ -474,7 +480,10 @@ bool Process::dump_perfcore()
     if (!json)
         return false;
     auto json_buffer = UserOrKernelBuffer::for_kernel_buffer(json->data());
-    return !description->write(json_buffer, json->size()).is_error();
+    if (description->write(json_buffer, json->size()).is_error())
+        return false;
+    dbgln("Wrote perfcore to {}", description->absolute_path());
+    return true;
 }
 
 void Process::finalize()
@@ -486,8 +495,10 @@ void Process::finalize()
     if (is_dumpable()) {
         if (m_should_dump_core)
             dump_core();
-        if (m_perf_event_buffer)
+        if (m_perf_event_buffer) {
             dump_perfcore();
+            TimeManagement::the().disable_profile_timer();
+        }
     }
 
     m_threads_for_coredump.clear();
@@ -556,22 +567,20 @@ void Process::die()
 
     for_each_thread([&](auto& thread) {
         m_threads_for_coredump.append(thread);
-        return IterationDecision::Continue;
     });
 
     {
         ScopedSpinLock lock(g_processes_lock);
-        for (auto* process = g_processes->head(); process;) {
-            auto* next_process = process->next();
-            if (process->has_tracee_thread(pid())) {
-                dbgln_if(PROCESS_DEBUG, "Process {} ({}) is attached by {} ({}) which will exit", process->name(), process->pid(), name(), pid());
-                process->stop_tracing();
-                auto err = process->send_signal(SIGSTOP, this);
+        for (auto it = g_processes->begin(); it != g_processes->end();) {
+            auto& process = *it;
+            ++it;
+            if (process.has_tracee_thread(pid())) {
+                dbgln_if(PROCESS_DEBUG, "Process {} ({}) is attached by {} ({}) which will exit", process.name(), process.pid(), name(), pid());
+                process.stop_tracing();
+                auto err = process.send_signal(SIGSTOP, this);
                 if (err.is_error())
-                    dbgln("Failed to send the SIGSTOP signal to {} ({})", process->name(), process->pid());
+                    dbgln("Failed to send the SIGSTOP signal to {} ({})", process.name(), process.pid());
             }
-
-            process = next_process;
         }
     }
 
@@ -674,9 +683,13 @@ void Process::set_tty(TTY* tty)
     m_tty = tty;
 }
 
-void Process::start_tracing_from(ProcessID tracer)
+KResult Process::start_tracing_from(ProcessID tracer)
 {
-    m_tracer = ThreadTracer::create(tracer);
+    auto thread_tracer = ThreadTracer::create(tracer);
+    if (!thread_tracer)
+        return ENOMEM;
+    m_tracer = move(thread_tracer);
+    return KSuccess;
 }
 
 void Process::stop_tracing()
@@ -695,9 +708,15 @@ bool Process::create_perf_events_buffer_if_needed()
 {
     if (!m_perf_event_buffer) {
         m_perf_event_buffer = PerformanceEventBuffer::try_create_with_size(4 * MiB);
-        m_perf_event_buffer->add_process(*this);
+        m_perf_event_buffer->add_process(*this, ProcessEventType::Create);
     }
     return !!m_perf_event_buffer;
+}
+
+void Process::delete_perf_events_buffer()
+{
+    if (m_perf_event_buffer)
+        m_perf_event_buffer = nullptr;
 }
 
 bool Process::remove_thread(Thread& thread)

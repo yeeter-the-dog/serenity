@@ -1,35 +1,16 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibCore/ArgsParser.h>
-#include <mman.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static int mutex_test();
@@ -67,11 +48,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    printf("Hello from the first thread!\n");
+    outln("Hello from the first thread!");
     pthread_t thread_id;
     int rc = pthread_create(
         &thread_id, nullptr, [](void*) -> void* {
-            printf("Hi there, from the second thread!\n");
+            outln("Hi there, from the second thread!");
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
         },
@@ -86,7 +67,7 @@ int main(int argc, char** argv)
         perror("pthread_join");
         return 1;
     }
-    printf("Okay, joined and got retval=%p\n", retval);
+    outln("Okay, joined and got retval={}", retval);
     return 0;
 }
 
@@ -102,12 +83,12 @@ int mutex_test()
     pthread_t thread_id;
     rc = pthread_create(
         &thread_id, nullptr, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             for (;;) {
                 pthread_mutex_lock(&mutex);
-                printf("Second thread stole mutex\n");
+                outln("Second thread stole mutex");
                 sleep(1);
-                printf("Second thread giving back mutex\n");
+                outln("Second thread giving back mutex");
                 pthread_mutex_unlock(&mutex);
                 sleep(1);
             }
@@ -121,7 +102,7 @@ int mutex_test()
     }
     for (;;) {
         pthread_mutex_lock(&mutex);
-        printf("Obnoxious spam!\n");
+        outln("Obnoxious spam!");
         pthread_mutex_unlock(&mutex);
         usleep(10000);
     }
@@ -133,57 +114,57 @@ int detached_test()
     pthread_attr_t attributes;
     int rc = pthread_attr_init(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_init: %s\n", strerror(rc));
+        outln("pthread_attr_init: {}", strerror(rc));
         return 1;
     }
 
     int detach_state = 99; // clearly invalid
     rc = pthread_attr_getdetachstate(&attributes, &detach_state);
     if (rc != 0) {
-        printf("pthread_attr_getdetachstate: %s\n", strerror(rc));
+        outln("pthread_attr_getdetachstate: {}", strerror(rc));
         return 2;
     }
-    printf("Default detach state: %s\n", detach_state == PTHREAD_CREATE_JOINABLE ? "joinable" : "detached");
+    outln("Default detach state: {}", detach_state == PTHREAD_CREATE_JOINABLE ? "joinable" : "detached");
 
     detach_state = PTHREAD_CREATE_DETACHED;
     rc = pthread_attr_setdetachstate(&attributes, detach_state);
     if (rc != 0) {
-        printf("pthread_attr_setdetachstate: %s\n", strerror(rc));
+        outln("pthread_attr_setdetachstate: {}", strerror(rc));
         return 3;
     }
-    printf("Set detach state on new thread to detached\n");
+    outln("Set detach state on new thread to detached");
 
     pthread_t thread_id;
     rc = pthread_create(
         &thread_id, &attributes, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             sleep(1);
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
         },
         nullptr);
     if (rc != 0) {
-        printf("pthread_create: %s\n", strerror(rc));
+        outln("pthread_create: {}", strerror(rc));
         return 4;
     }
 
     void* ret_val;
     rc = pthread_join(thread_id, &ret_val);
     if (rc != 0 && rc != EINVAL) {
-        printf("pthread_join: %s\n", strerror(rc));
+        outln("pthread_join: {}", strerror(rc));
         return 5;
     }
     if (rc != EINVAL) {
-        printf("Expected EINVAL! Thread was joinable?\n");
+        outln("Expected EINVAL! Thread was joinable?");
         return 6;
     }
 
     sleep(2);
-    printf("Thread was created detached. I sure hope it exited on its own.\n");
+    outln("Thread was created detached. I sure hope it exited on its own.");
 
     rc = pthread_attr_destroy(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_destroy: %s\n", strerror(rc));
+        outln("pthread_attr_destroy: {}", strerror(rc));
         return 7;
     }
 
@@ -195,30 +176,30 @@ int priority_test()
     pthread_attr_t attributes;
     int rc = pthread_attr_init(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_init: %s\n", strerror(rc));
+        outln("pthread_attr_init: {}", strerror(rc));
         return 1;
     }
 
     struct sched_param sched_params;
     rc = pthread_attr_getschedparam(&attributes, &sched_params);
     if (rc != 0) {
-        printf("pthread_attr_getschedparam: %s\n", strerror(rc));
+        outln("pthread_attr_getschedparam: {}", strerror(rc));
         return 2;
     }
-    printf("Default priority: %d\n", sched_params.sched_priority);
+    outln("Default priority: {}", sched_params.sched_priority);
 
     sched_params.sched_priority = 3;
     rc = pthread_attr_setschedparam(&attributes, &sched_params);
     if (rc != 0) {
-        printf("pthread_attr_setschedparam: %s\n", strerror(rc));
+        outln("pthread_attr_setschedparam: {}", strerror(rc));
         return 3;
     }
-    printf("Set thread priority to 3\n");
+    outln("Set thread priority to 3");
 
     pthread_t thread_id;
     rc = pthread_create(
         &thread_id, &attributes, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             sleep(1);
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
@@ -237,7 +218,7 @@ int priority_test()
 
     rc = pthread_attr_destroy(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_destroy: %s\n", strerror(rc));
+        outln("pthread_attr_destroy: {}", strerror(rc));
         return 6;
     }
 
@@ -249,30 +230,30 @@ int stack_size_test()
     pthread_attr_t attributes;
     int rc = pthread_attr_init(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_init: %s\n", strerror(rc));
+        outln("pthread_attr_init: {}", strerror(rc));
         return 1;
     }
 
     size_t stack_size;
     rc = pthread_attr_getstacksize(&attributes, &stack_size);
     if (rc != 0) {
-        printf("pthread_attr_getstacksize: %s\n", strerror(rc));
+        outln("pthread_attr_getstacksize: {}", strerror(rc));
         return 2;
     }
-    printf("Default stack size: %zu\n", stack_size);
+    outln("Default stack size: {}", stack_size);
 
     stack_size = 8 * 1024 * 1024;
     rc = pthread_attr_setstacksize(&attributes, stack_size);
     if (rc != 0) {
-        printf("pthread_attr_setstacksize: %s\n", strerror(rc));
+        outln("pthread_attr_setstacksize: {}", strerror(rc));
         return 3;
     }
-    printf("Set thread stack size to 8 MiB\n");
+    outln("Set thread stack size to 8 MiB");
 
     pthread_t thread_id;
     rc = pthread_create(
         &thread_id, &attributes, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             sleep(1);
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
@@ -291,7 +272,7 @@ int stack_size_test()
 
     rc = pthread_attr_destroy(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_destroy: %s\n", strerror(rc));
+        outln("pthread_attr_destroy: {}", strerror(rc));
         return 6;
     }
 
@@ -303,11 +284,11 @@ int staying_alive_test()
     pthread_t thread_id;
     int rc = pthread_create(
         &thread_id, nullptr, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             sleep(20);
-            printf("Secondary thread is still alive\n");
+            outln("Secondary thread is still alive");
             sleep(3520);
-            printf("Secondary thread exiting\n");
+            outln("Secondary thread exiting");
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
         },
@@ -318,10 +299,10 @@ int staying_alive_test()
     }
 
     sleep(1);
-    printf("I'm the main thread :^)\n");
+    outln("I'm the main thread :^)");
     sleep(3600);
 
-    printf("Main thread exiting\n");
+    outln("Main thread exiting");
     return 0;
 }
 
@@ -330,7 +311,7 @@ int set_stack_test()
     pthread_attr_t attributes;
     int rc = pthread_attr_init(&attributes);
     if (rc < 0) {
-        printf("pthread_attr_init: %s\n", strerror(rc));
+        outln("pthread_attr_init: {}", strerror(rc));
         return 1;
     }
 
@@ -344,29 +325,29 @@ int set_stack_test()
 
     rc = pthread_attr_setstack(&attributes, stack_addr, stack_size);
     if (rc != 0) {
-        printf("pthread_attr_setstack: %s\n", strerror(rc));
+        outln("pthread_attr_setstack: {}", strerror(rc));
         return 2;
     }
-    printf("Set thread stack to %p, size %zu\n", stack_addr, stack_size);
+    outln("Set thread stack to {:p}, size {}", stack_addr, stack_size);
 
     size_t stack_size_verify;
     void* stack_addr_verify;
 
     rc = pthread_attr_getstack(&attributes, &stack_addr_verify, &stack_size_verify);
     if (rc != 0) {
-        printf("pthread_attr_getstack: %s\n", strerror(rc));
+        outln("pthread_attr_getstack: {}", strerror(rc));
         return 3;
     }
 
     if (stack_addr != stack_addr_verify || stack_size != stack_size_verify) {
-        printf("Stack address and size don't match! addr: %p %p, size: %zu %zu\n", stack_addr, stack_addr_verify, stack_size, stack_size_verify);
+        outln("Stack address and size don't match! addr: {:p} {:p}, size: {} {}", stack_addr, stack_addr_verify, stack_size, stack_size_verify);
         return 4;
     }
 
     pthread_t thread_id;
     rc = pthread_create(
         &thread_id, &attributes, [](void*) -> void* {
-            printf("I'm the secondary thread :^)\n");
+            outln("I'm the secondary thread :^)");
             sleep(1);
             pthread_exit((void*)0xDEADBEEF);
             return nullptr;
@@ -385,7 +366,7 @@ int set_stack_test()
 
     rc = pthread_attr_destroy(&attributes);
     if (rc != 0) {
-        printf("pthread_attr_destroy: %s\n", strerror(rc));
+        outln("pthread_attr_destroy: {}", strerror(rc));
         return 7;
     }
 

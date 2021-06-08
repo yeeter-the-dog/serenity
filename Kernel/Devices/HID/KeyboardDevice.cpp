@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -38,9 +18,7 @@
 
 namespace Kernel {
 
-#define IRQ_KEYBOARD 1
-
-static const KeyCode unshifted_key_map[0x80] = {
+static constexpr KeyCode unshifted_key_map[0x80] = {
     Key_Invalid,
     Key_Escape,
     Key_1,
@@ -56,7 +34,7 @@ static const KeyCode unshifted_key_map[0x80] = {
     Key_Minus,
     Key_Equal,
     Key_Backspace,
-    Key_Tab, //15
+    Key_Tab, // 15
     Key_Q,
     Key_W,
     Key_E,
@@ -137,7 +115,7 @@ static const KeyCode unshifted_key_map[0x80] = {
     Key_Menu,
 };
 
-static const KeyCode shifted_key_map[0x100] = {
+static constexpr KeyCode shifted_key_map[0x100] = {
     Key_Invalid,
     Key_Escape,
     Key_ExclamationPoint,
@@ -234,8 +212,6 @@ static const KeyCode shifted_key_map[0x100] = {
     Key_Menu,
 };
 
-static const KeyCode numpad_key_map[13] = { Key_7, Key_8, Key_9, Key_Invalid, Key_4, Key_5, Key_6, Key_Invalid, Key_1, Key_2, Key_3, Key_0, Key_Comma };
-
 void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
 {
     KeyCode key = (m_modifiers & Mod_Shift) ? shifted_key_map[scan_code] : unshifted_key_map[scan_code];
@@ -246,6 +222,7 @@ void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
     if (m_num_lock_on && !m_has_e0_prefix) {
         if (scan_code >= 0x47 && scan_code <= 0x53) {
             u8 index = scan_code - 0x47;
+            constexpr KeyCode numpad_key_map[13] = { Key_7, Key_8, Key_9, Key_Invalid, Key_4, Key_5, Key_6, Key_Invalid, Key_1, Key_2, Key_3, Key_0, Key_Comma };
             KeyCode newKey = numpad_key_map[index];
 
             if (newKey != Key_Invalid) {
@@ -254,8 +231,14 @@ void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
         }
     }
 
-    if (key == Key_CapsLock && pressed)
+    if (!g_caps_lock_remapped_to_ctrl && key == Key_CapsLock && pressed)
         m_caps_lock_on = !m_caps_lock_on;
+
+    if (g_caps_lock_remapped_to_ctrl && key == Key_CapsLock)
+        m_caps_lock_to_ctrl_pressed = pressed;
+
+    if (g_caps_lock_remapped_to_ctrl)
+        update_modifier(Mod_Ctrl, m_caps_lock_to_ctrl_pressed);
 
     Event event;
     event.key = key;
@@ -312,13 +295,13 @@ KResultOr<size_t> KeyboardDevice::read(FileDescription&, u64, UserOrKernelBuffer
 
         lock.unlock();
 
-        ssize_t n = buffer.write_buffered<sizeof(Event)>(sizeof(Event), [&](u8* data, size_t data_bytes) {
+        auto result = buffer.write_buffered<sizeof(Event)>(sizeof(Event), [&](u8* data, size_t data_bytes) {
             memcpy(data, &event, sizeof(Event));
-            return (ssize_t)data_bytes;
+            return data_bytes;
         });
-        if (n < 0)
-            return KResult((ErrnoCode)-n);
-        VERIFY((size_t)n == sizeof(Event));
+        if (result.is_error())
+            return result.error();
+        VERIFY(result.value() == sizeof(Event));
         nread += sizeof(Event);
 
         lock.lock();

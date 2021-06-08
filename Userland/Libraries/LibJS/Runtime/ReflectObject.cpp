@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -56,7 +36,7 @@ static Function* get_target_function_from(GlobalObject& global_object, const Str
     return &target.as_function();
 }
 
-static void prepare_arguments_list(GlobalObject& global_object, Value value, MarkedValueList* arguments)
+static void prepare_arguments_list(GlobalObject& global_object, Value value, MarkedValueList& arguments)
 {
     auto& vm = global_object.vm();
     if (!value.is_object()) {
@@ -71,7 +51,7 @@ static void prepare_arguments_list(GlobalObject& global_object, Value value, Mar
         auto element = arguments_list.get(String::number(i));
         if (vm.exception())
             return;
-        arguments->append(element.value_or(js_undefined()));
+        arguments.append(element.value_or(js_undefined()));
     }
 }
 
@@ -98,6 +78,7 @@ void ReflectObject::initialize(GlobalObject& global_object)
     define_native_function(vm.names.preventExtensions, prevent_extensions, 1, attr);
     define_native_function(vm.names.set, set, 3, attr);
     define_native_function(vm.names.setPrototypeOf, set_prototype_of, 2, attr);
+    Object::define_property(vm.well_known_symbol_to_string_tag(), js_string(vm.heap(), "Reflect"), Attribute::Configurable);
 }
 
 ReflectObject::~ReflectObject()
@@ -111,7 +92,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::apply)
         return {};
     auto this_arg = vm.argument(1);
     MarkedValueList arguments(vm.heap());
-    prepare_arguments_list(global_object, vm.argument(2), &arguments);
+    prepare_arguments_list(global_object, vm.argument(2), arguments);
     if (vm.exception())
         return {};
     return vm.call(*target, this_arg, move(arguments));
@@ -123,7 +104,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::construct)
     if (!target)
         return {};
     MarkedValueList arguments(vm.heap());
-    prepare_arguments_list(global_object, vm.argument(1), &arguments);
+    prepare_arguments_list(global_object, vm.argument(1), arguments);
     if (vm.exception())
         return {};
     auto* new_target = target;
@@ -144,13 +125,13 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::define_property)
     auto* target = get_target_object_from(global_object, "defineProperty");
     if (!target)
         return {};
+    auto property_key = vm.argument(1).to_property_key(global_object);
+    if (vm.exception())
+        return {};
     if (!vm.argument(2).is_object()) {
         vm.throw_exception<TypeError>(global_object, ErrorType::ReflectBadDescriptorArgument);
         return {};
     }
-    auto property_key = StringOrSymbol::from_value(global_object, vm.argument(1));
-    if (vm.exception())
-        return {};
     auto& descriptor = vm.argument(2).as_object();
     auto success = target->define_property(property_key, descriptor, false);
     if (vm.exception())
@@ -163,20 +144,10 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::delete_property)
     auto* target = get_target_object_from(global_object, "deleteProperty");
     if (!target)
         return {};
-
-    auto property_key = vm.argument(1);
-    auto property_name = PropertyName::from_value(global_object, property_key);
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
-    auto property_key_number = property_key.to_number(global_object);
-    if (vm.exception())
-        return {};
-    if (property_key_number.is_finite_number()) {
-        auto property_key_as_double = property_key_number.as_double();
-        if (property_key_as_double >= 0 && (i32)property_key_as_double == property_key_as_double)
-            property_name = PropertyName(property_key_as_double);
-    }
-    return target->delete_property(property_name);
+    return Value(target->delete_property(property_key));
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get)
@@ -184,7 +155,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get)
     auto* target = get_target_object_from(global_object, "get");
     if (!target)
         return {};
-    auto property_key = PropertyName::from_value(global_object, vm.argument(1));
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
     Value receiver = {};
@@ -198,7 +169,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get_own_property_descriptor)
     auto* target = get_target_object_from(global_object, "getOwnPropertyDescriptor");
     if (!target)
         return {};
-    auto property_key = PropertyName::from_value(global_object, vm.argument(1));
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
     return target->get_own_property_descriptor_object(property_key);
@@ -217,7 +188,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::has)
     auto* target = get_target_object_from(global_object, "has");
     if (!target)
         return {};
-    auto property_key = PropertyName::from_value(global_object, vm.argument(1));
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
     return Value(target->has_property(property_key));
@@ -252,7 +223,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::set)
     auto* target = get_target_object_from(global_object, "set");
     if (!target)
         return {};
-    auto property_key = vm.argument(1).to_string(global_object);
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
     auto value = vm.argument(2);

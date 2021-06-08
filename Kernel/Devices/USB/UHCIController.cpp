@@ -1,32 +1,12 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Jesse Buhagiar <jooster669@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Platform.h>
-
+#include <Kernel/CommandLine.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/USB/UHCIController.h>
 #include <Kernel/Process.h>
@@ -89,13 +69,18 @@ UHCIController& UHCIController::the()
 
 UNMAP_AFTER_INIT void UHCIController::detect()
 {
+    if (kernel_command_line().disable_uhci_controller())
+        return;
+
     PCI::enumerate([&](const PCI::Address& address, PCI::ID id) {
         if (address.is_null())
             return;
 
         if (PCI::get_class(address) == 0xc && PCI::get_subclass(address) == 0x03 && PCI::get_programming_interface(address) == 0) {
-            if (!s_the)
+            if (!s_the) {
                 s_the = new UHCIController(address, id);
+                s_the->spawn_port_proc();
+            }
         }
     });
 }
@@ -110,8 +95,6 @@ UNMAP_AFTER_INIT UHCIController::UHCIController(PCI::Address address, PCI::ID id
 
     reset();
     start();
-
-    spawn_port_proc();
 }
 
 UNMAP_AFTER_INIT UHCIController::~UHCIController()
@@ -151,7 +134,7 @@ void UHCIController::reset()
 
 UNMAP_AFTER_INIT void UHCIController::create_structures()
 {
-    // Let's allocate memory for botht the QH and TD pools
+    // Let's allocate memory for both the QH and TD pools
     // First the QH pool and all of the Interrupt QH's
     auto qh_pool_vmobject = ContiguousVMObject::create_with_size(2 * PAGE_SIZE);
     m_qh_pool = MemoryManager::the().allocate_kernel_region_with_vmobject(*qh_pool_vmobject, 2 * PAGE_SIZE, "UHCI Queue Head Pool", Region::Access::Write);
@@ -193,9 +176,8 @@ UNMAP_AFTER_INIT void UHCIController::create_structures()
         transfer_descriptor->set_isochronous();
         transfer_descriptor->link_queue_head(m_interrupt_transfer_queue->paddr());
 
-#if UHCI_VERBOSE_DEBUG
-        transfer_descriptor->print();
-#endif
+        if constexpr (UHCI_VERBOSE_DEBUG)
+            transfer_descriptor->print();
     }
 
     m_free_td_pool.resize(MAXIMUM_NUMBER_OF_TDS);
@@ -209,10 +191,10 @@ UNMAP_AFTER_INIT void UHCIController::create_structures()
         // access the raw descriptor (that we later send to the controller)
         m_free_td_pool.at(i) = new (placement_addr) Kernel::USB::TransferDescriptor(paddr);
 
-#if UHCI_VERBOSE_DEBUG
-        auto transfer_descriptor = m_free_td_pool.at(i);
-        transfer_descriptor->print();
-#endif
+        if constexpr (UHCI_VERBOSE_DEBUG) {
+            auto transfer_descriptor = m_free_td_pool.at(i);
+            transfer_descriptor->print();
+        }
     }
 
     if constexpr (UHCI_DEBUG) {

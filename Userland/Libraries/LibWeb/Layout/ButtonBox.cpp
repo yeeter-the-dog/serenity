@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibGUI/Event.h>
@@ -31,7 +11,7 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/ButtonBox.h>
 #include <LibWeb/Layout/Label.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 
 namespace Web::Layout {
 
@@ -69,7 +49,7 @@ void ButtonBox::paint(PaintContext& context, PaintPhase phase)
 
         auto text_rect = enclosing_int_rect(absolute_rect());
         if (m_being_pressed)
-            text_rect.move_by(1, 1);
+            text_rect.translate_by(1, 1);
         context.painter().draw_text(text_rect, dom_node().value(), font(), Gfx::TextAlignment::Center, context.palette().button_text());
     }
 }
@@ -83,7 +63,7 @@ void ButtonBox::handle_mousedown(Badge<EventHandler>, const Gfx::IntPoint&, unsi
     set_needs_display();
 
     m_tracking_mouse = true;
-    frame().event_handler().set_mouse_event_tracking_layout_node(this);
+    browsing_context().event_handler().set_mouse_event_tracking_layout_node(this);
 }
 
 void ButtonBox::handle_mouseup(Badge<EventHandler>, const Gfx::IntPoint& position, unsigned button, unsigned)
@@ -93,7 +73,7 @@ void ButtonBox::handle_mouseup(Badge<EventHandler>, const Gfx::IntPoint& positio
 
     // NOTE: Handling the click may run arbitrary JS, which could disappear this node.
     NonnullRefPtr protected_this = *this;
-    NonnullRefPtr protected_frame = frame();
+    NonnullRefPtr protected_frame = browsing_context();
 
     bool is_inside_node_or_label = enclosing_int_rect(absolute_rect()).contains(position);
     if (!is_inside_node_or_label)
@@ -134,7 +114,7 @@ void ButtonBox::handle_associated_label_mouseup(Badge<Label>)
 {
     // NOTE: Handling the click may run arbitrary JS, which could disappear this node.
     NonnullRefPtr protected_this = *this;
-    NonnullRefPtr protected_frame = frame();
+    NonnullRefPtr protected_frame = browsing_context();
 
     dom_node().did_click_button({});
     m_being_pressed = false;

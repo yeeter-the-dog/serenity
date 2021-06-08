@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -32,6 +12,7 @@
 #include <AK/HashMap.h>
 #include <AK/RefCounted.h>
 #include <AK/StackInfo.h>
+#include <AK/Variant.h>
 #include <LibJS/Heap/Heap.h>
 #include <LibJS/Runtime/CommonPropertyNames.h>
 #include <LibJS/Runtime/Error.h>
@@ -42,6 +23,9 @@
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
+
+class Identifier;
+struct BindingPattern;
 
 enum class ScopeType {
     None,
@@ -59,7 +43,7 @@ struct ScopeFrame {
 };
 
 struct CallFrame {
-    const ASTNode* current_node;
+    const ASTNode* current_node { nullptr };
     FlyString function_name;
     Value callee;
     Value this_value;
@@ -74,9 +58,6 @@ public:
     static NonnullRefPtr<VM> create();
     ~VM();
 
-    bool should_log_exceptions() const { return m_should_log_exceptions; }
-    void set_should_log_exceptions(bool b) { m_should_log_exceptions = b; }
-
     Heap& heap() { return m_heap; }
     const Heap& heap() const { return m_heap; }
 
@@ -86,12 +67,11 @@ public:
     void push_interpreter(Interpreter&);
     void pop_interpreter(Interpreter&);
 
-    Exception* exception()
-    {
-        return m_exception;
-    }
-
+    Exception* exception() { return m_exception; }
+    void set_exception(Exception& exception) { m_exception = &exception; }
     void clear_exception() { m_exception = nullptr; }
+
+    void dump_backtrace() const;
 
     class InterpreterExecutionScope {
     public:
@@ -122,14 +102,19 @@ public:
     {
         VERIFY(!exception());
         // Ensure we got some stack space left, so the next function call doesn't kill us.
-        // This value is merely a guess and might need tweaking at a later point.
-        if (m_stack_info.size_free() < 16 * KiB)
-            throw_exception<Error>(global_object, "RuntimeError", "Call stack size limit exceeded");
+        // Note: the 32 kiB used to be 16 kiB, but that turned out to not be enough with ASAN enabled.
+        if (m_stack_info.size_free() < 32 * KiB)
+            throw_exception<Error>(global_object, "Call stack size limit exceeded");
         else
             m_call_stack.append(&call_frame);
     }
 
-    void pop_call_frame() { m_call_stack.take_last(); }
+    void pop_call_frame()
+    {
+        m_call_stack.take_last();
+        if (m_call_stack.is_empty() && on_call_stack_emptied)
+            on_call_stack_emptied();
+    }
 
     CallFrame& call_frame() { return *m_call_stack.last(); }
     const CallFrame& call_frame() const { return *m_call_stack.last(); }
@@ -183,10 +168,14 @@ public:
     void unwind(ScopeType type, FlyString label = {})
     {
         m_unwind_until = type;
-        m_unwind_until_label = label;
+        m_unwind_until_label = move(label);
     }
-    void stop_unwind() { m_unwind_until = ScopeType::None; }
-    bool should_unwind_until(ScopeType type, FlyString label = {}) const
+    void stop_unwind()
+    {
+        m_unwind_until = ScopeType::None;
+        m_unwind_until_label = {};
+    }
+    bool should_unwind_until(ScopeType type, FlyString const& label) const
     {
         if (m_unwind_until_label.is_null())
             return m_unwind_until == type;
@@ -197,7 +186,11 @@ public:
     ScopeType unwind_until() const { return m_unwind_until; }
 
     Value get_variable(const FlyString& name, GlobalObject&);
-    void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false);
+    void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    bool delete_variable(FlyString const& name);
+    void assign(const Variant<NonnullRefPtr<Identifier>, NonnullRefPtr<BindingPattern>>& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    void assign(const FlyString& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
+    void assign(const NonnullRefPtr<BindingPattern>& target, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
 
     Reference get_reference(const FlyString& name);
 
@@ -207,10 +200,10 @@ public:
         return throw_exception(global_object, T::create(global_object, forward<Args>(args)...));
     }
 
-    void throw_exception(Exception*);
+    void throw_exception(Exception&);
     void throw_exception(GlobalObject& global_object, Value value)
     {
-        return throw_exception(heap().allocate<Exception>(global_object, value));
+        return throw_exception(*heap().allocate<Exception>(global_object, value));
     }
 
     template<typename T, typename... Args>
@@ -221,7 +214,7 @@ public:
 
     Value construct(Function&, Function& new_target, Optional<MarkedValueList> arguments, GlobalObject&);
 
-    String join_arguments() const;
+    String join_arguments(size_t start_index = 0) const;
 
     Value resolve_this_binding(GlobalObject&) const;
     const ScopeObject* find_this_scope() const;
@@ -248,6 +241,7 @@ public:
 
     void promise_rejection_tracker(const Promise&, Promise::RejectionOperation) const;
 
+    AK::Function<void()> on_call_stack_emptied;
     AK::Function<void(const Promise&)> on_promise_unhandled_rejection;
     AK::Function<void(const Promise&)> on_promise_rejection_handled;
 
@@ -284,7 +278,6 @@ private:
     Shape* m_scope_object_shape { nullptr };
 
     bool m_underscore_is_last_value { false };
-    bool m_should_log_exceptions { false };
 };
 
 template<>

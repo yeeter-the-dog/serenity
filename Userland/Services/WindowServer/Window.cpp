@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Window.h"
@@ -33,8 +13,8 @@
 #include "Screen.h"
 #include "WindowManager.h"
 #include <AK/Badge.h>
+#include <AK/CharacterTypes.h>
 #include <WindowServer/WindowClientEndpoint.h>
-#include <ctype.h>
 
 namespace WindowServer {
 
@@ -113,12 +93,6 @@ Window::Window(ClientConnection& client, WindowType window_type, int window_id, 
     , m_icon(default_window_icon())
     , m_frame(*this)
 {
-    // FIXME: This should not be hard-coded here.
-    if (m_type == WindowType::Taskbar) {
-        m_wm_event_mask = WMEventMask::WindowStateChanges | WMEventMask::WindowRemovals | WMEventMask::WindowIconChanges;
-        m_listens_to_wm_events = true;
-    }
-
     // Set default minimum size for Normal windows
     if (m_type == WindowType::Normal)
         m_minimum_size = s_default_normal_minimum_size;
@@ -148,7 +122,7 @@ void Window::set_title(const String& title)
     if (m_title == title)
         return;
     m_title = title;
-    frame().invalidate_title_bar();
+    frame().invalidate_titlebar();
     WindowManager::the().notify_title_changed(*this);
 }
 
@@ -234,7 +208,8 @@ void Window::nudge_into_desktop(bool force_titlebar_visible)
 
 void Window::set_minimum_size(const Gfx::IntSize& size)
 {
-    VERIFY(!size.is_empty());
+    if (size.is_null())
+        return;
 
     if (m_minimum_size == size)
         return;
@@ -252,39 +227,37 @@ void Window::handle_mouse_event(const MouseEvent& event)
 
     switch (event.type()) {
     case Event::MouseMove:
-        m_client->post_message(Messages::WindowClient::MouseMove(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta(), event.is_drag(), event.mime_types()));
+        m_client->async_mouse_move(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta(), event.is_drag(), event.mime_types());
         break;
     case Event::MouseDown:
-        m_client->post_message(Messages::WindowClient::MouseDown(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_down(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseDoubleClick:
-        m_client->post_message(Messages::WindowClient::MouseDoubleClick(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_double_click(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseUp:
-        m_client->post_message(Messages::WindowClient::MouseUp(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_up(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseWheel:
-        m_client->post_message(Messages::WindowClient::MouseWheel(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_wheel(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     default:
         VERIFY_NOT_REACHED();
     }
 }
 
-void Window::update_menu_item_text(PopupMenuItem item)
+void Window::update_window_menu_items()
 {
-    if (m_window_menu) {
-        m_window_menu->item((int)item).set_text(item == PopupMenuItem::Minimize ? (m_minimized ? "Unminimize" : "Minimize") : (m_maximized ? "Restore" : "Maximize"));
-        m_window_menu->redraw();
-    }
-}
+    if (!m_window_menu)
+        return;
 
-void Window::update_menu_item_enabled(PopupMenuItem item)
-{
-    if (m_window_menu) {
-        m_window_menu->item((int)item).set_enabled(item == PopupMenuItem::Minimize ? m_minimizable : m_resizable);
-        m_window_menu->redraw();
-    }
+    m_window_menu_minimize_item->set_text(m_minimized ? "&Unminimize" : "Mi&nimize");
+    m_window_menu_minimize_item->set_enabled(m_minimizable);
+
+    m_window_menu_maximize_item->set_text(m_maximized ? "&Restore" : "Ma&ximize");
+    m_window_menu_maximize_item->set_enabled(m_resizable);
+
+    m_window_menu_move_item->set_enabled(!m_minimized && !m_maximized && !m_fullscreen);
 }
 
 void Window::set_minimized(bool minimized)
@@ -294,7 +267,7 @@ void Window::set_minimized(bool minimized)
     if (minimized && !m_minimizable)
         return;
     m_minimized = minimized;
-    update_menu_item_text(PopupMenuItem::Minimize);
+    update_window_menu_items();
     Compositor::the().invalidate_occlusions();
     Compositor::the().invalidate_screen(frame().render_rect());
     if (!blocking_modal_window())
@@ -309,7 +282,7 @@ void Window::set_minimizable(bool minimizable)
     if (m_minimizable == minimizable)
         return;
     m_minimizable = minimizable;
-    update_menu_item_enabled(PopupMenuItem::Minimize);
+    update_window_menu_items();
     // TODO: Hide/show (or alternatively change enabled state of) window minimize button dynamically depending on value of m_minimizable
 }
 
@@ -379,7 +352,7 @@ void Window::set_maximized(bool maximized, Optional<Gfx::IntPoint> fixed_point)
         return;
     m_tiled = WindowTileType::None;
     m_maximized = maximized;
-    update_menu_item_text(PopupMenuItem::Maximize);
+    update_window_menu_items();
     if (maximized) {
         m_unmaximized_rect = m_rect;
         set_rect(WindowManager::the().maximized_window_rect(*this));
@@ -416,7 +389,7 @@ void Window::set_resizable(bool resizable)
     if (m_resizable == resizable)
         return;
     m_resizable = resizable;
-    update_menu_item_enabled(PopupMenuItem::Maximize);
+    update_window_menu_items();
     // TODO: Hide/show (or alternatively change enabled state of) window maximize button dynamically depending on value of is_resizable()
 }
 
@@ -440,39 +413,38 @@ void Window::event(Core::Event& event)
 
     switch (event.type()) {
     case Event::WindowEntered:
-        m_client->post_message(Messages::WindowClient::WindowEntered(m_window_id));
+        m_client->async_window_entered(m_window_id);
         break;
     case Event::WindowLeft:
-        m_client->post_message(Messages::WindowClient::WindowLeft(m_window_id));
+        m_client->async_window_left(m_window_id);
         break;
     case Event::KeyDown:
         handle_keydown_event(static_cast<const KeyEvent&>(event));
         break;
     case Event::KeyUp:
-        m_client->post_message(
-            Messages::WindowClient::KeyUp(m_window_id,
-                (u32) static_cast<const KeyEvent&>(event).code_point(),
-                (u32) static_cast<const KeyEvent&>(event).key(),
-                static_cast<const KeyEvent&>(event).modifiers(),
-                (u32) static_cast<const KeyEvent&>(event).scancode()));
+        m_client->async_key_up(m_window_id,
+            (u32) static_cast<const KeyEvent&>(event).code_point(),
+            (u32) static_cast<const KeyEvent&>(event).key(),
+            static_cast<const KeyEvent&>(event).modifiers(),
+            (u32) static_cast<const KeyEvent&>(event).scancode());
         break;
     case Event::WindowActivated:
-        m_client->post_message(Messages::WindowClient::WindowActivated(m_window_id));
+        m_client->async_window_activated(m_window_id);
         break;
     case Event::WindowDeactivated:
-        m_client->post_message(Messages::WindowClient::WindowDeactivated(m_window_id));
+        m_client->async_window_deactivated(m_window_id);
         break;
     case Event::WindowInputEntered:
-        m_client->post_message(Messages::WindowClient::WindowInputEntered(m_window_id));
+        m_client->async_window_input_entered(m_window_id);
         break;
     case Event::WindowInputLeft:
-        m_client->post_message(Messages::WindowClient::WindowInputLeft(m_window_id));
+        m_client->async_window_input_left(m_window_id);
         break;
     case Event::WindowCloseRequest:
-        m_client->post_message(Messages::WindowClient::WindowCloseRequest(m_window_id));
+        m_client->async_window_close_request(m_window_id);
         break;
     case Event::WindowResized:
-        m_client->post_message(Messages::WindowClient::WindowResized(m_window_id, static_cast<const ResizeEvent&>(event).rect()));
+        m_client->async_window_resized(m_window_id, static_cast<const ResizeEvent&>(event).rect());
         break;
     default:
         break;
@@ -481,10 +453,15 @@ void Window::event(Core::Event& event)
 
 void Window::handle_keydown_event(const KeyEvent& event)
 {
+    if (event.modifiers() == Mod_Alt && event.key() == Key_Space && type() == WindowType::Normal && !is_frameless()) {
+        auto position = frame().titlebar_rect().bottom_left().translated(frame().rect().location());
+        popup_window_menu(position, WindowMenuDefaultAction::Close);
+        return;
+    }
     if (event.modifiers() == Mod_Alt && event.code_point() && menubar()) {
         Menu* menu_to_open = nullptr;
         menubar()->for_each_menu([&](Menu& menu) {
-            if (tolower(menu.alt_shortcut_character()) == tolower(event.code_point())) {
+            if (to_ascii_lowercase(menu.alt_shortcut_character()) == to_ascii_lowercase(event.code_point())) {
                 menu_to_open = &menu;
                 return IterationDecision::Break;
             }
@@ -493,11 +470,11 @@ void Window::handle_keydown_event(const KeyEvent& event)
         if (menu_to_open) {
             frame().open_menubar_menu(*menu_to_open);
             if (!menu_to_open->is_empty())
-                menu_to_open->set_hovered_item(0);
+                menu_to_open->set_hovered_index(0);
             return;
         }
     }
-    m_client->post_message(Messages::WindowClient::KeyDown(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode()));
+    m_client->async_key_down(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode());
 }
 
 void Window::set_global_cursor_tracking_enabled(bool enabled)
@@ -567,7 +544,7 @@ bool Window::invalidate_no_notify(const Gfx::IntRect& rect, bool with_frame)
 
     auto outer_rect = frame().render_rect();
     auto inner_rect = rect;
-    inner_rect.move_by(position());
+    inner_rect.translate_by(position());
     // FIXME: This seems slightly wrong; the inner rect shouldn't intersect the border part of the outer rect.
     inner_rect.intersect(outer_rect);
     if (inner_rect.is_empty())
@@ -582,7 +559,7 @@ bool Window::invalidate_no_notify(const Gfx::IntRect& rect, bool with_frame)
 
 void Window::refresh_client_size()
 {
-    client()->post_message(Messages::WindowClient::WindowResized(m_window_id, m_rect));
+    client()->async_window_resized(m_window_id, m_rect);
 }
 
 void Window::prepare_dirty_rects()
@@ -657,54 +634,70 @@ void Window::ensure_window_menu()
         m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)");
         m_window_menu->set_window_menu_of(*this);
 
-        auto minimize_item = make<MenuItem>(*m_window_menu, 1, m_minimized ? "Unminimize" : "Minimize");
+        auto minimize_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::MinimizeOrUnminimize, "");
         m_window_menu_minimize_item = minimize_item.ptr();
         m_window_menu->add_item(move(minimize_item));
 
-        auto maximize_item = make<MenuItem>(*m_window_menu, 2, m_maximized ? "Restore" : "Maximize");
+        auto maximize_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::MaximizeOrRestore, "");
         m_window_menu_maximize_item = maximize_item.ptr();
         m_window_menu->add_item(move(maximize_item));
 
+        auto move_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::Move, "&Move");
+        m_window_menu_move_item = move_item.ptr();
+        m_window_menu->add_item(move(move_item));
+
         m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
 
-        auto menubar_visibility_item = make<MenuItem>(*m_window_menu, 4, "Menu bar");
+        auto menubar_visibility_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::ToggleMenubarVisibility, "Menu &Bar");
         m_window_menu_menubar_visibility_item = menubar_visibility_item.ptr();
         menubar_visibility_item->set_checkable(true);
         m_window_menu->add_item(move(menubar_visibility_item));
 
-        auto close_item = make<MenuItem>(*m_window_menu, 3, "Close");
+        m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
+
+        auto close_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::Close, "&Close");
         m_window_menu_close_item = close_item.ptr();
         m_window_menu_close_item->set_icon(&close_icon());
         m_window_menu_close_item->set_default(true);
         m_window_menu->add_item(move(close_item));
 
-        m_window_menu->item((int)PopupMenuItem::Minimize).set_enabled(m_minimizable);
-        m_window_menu->item((int)PopupMenuItem::Maximize).set_enabled(m_resizable);
-
         m_window_menu->on_item_activation = [&](auto& item) {
-            switch (item.identifier()) {
-            case 1:
-                WindowManager::the().minimize_windows(*this, !m_minimized);
-                if (!m_minimized)
-                    WindowManager::the().move_to_front_and_make_active(*this);
-                break;
-            case 2:
-                WindowManager::the().maximize_windows(*this, !m_maximized);
-                WindowManager::the().move_to_front_and_make_active(*this);
-                break;
-            case 3:
-                request_close();
-                break;
-            case 4:
-                frame().invalidate();
-                item.set_checked(!item.is_checked());
-                m_should_show_menubar = item.is_checked();
-                frame().invalidate();
-                Compositor::the().invalidate_occlusions();
-                Compositor::the().invalidate_screen();
-                break;
-            }
+            handle_window_menu_action(static_cast<WindowMenuAction>(item.identifier()));
         };
+
+        update_window_menu_items();
+    }
+}
+
+void Window::handle_window_menu_action(WindowMenuAction action)
+{
+    switch (action) {
+    case WindowMenuAction::MinimizeOrUnminimize:
+        WindowManager::the().minimize_windows(*this, !m_minimized);
+        if (!m_minimized)
+            WindowManager::the().move_to_front_and_make_active(*this);
+        break;
+    case WindowMenuAction::MaximizeOrRestore:
+        WindowManager::the().maximize_windows(*this, !m_maximized);
+        WindowManager::the().move_to_front_and_make_active(*this);
+        break;
+    case WindowMenuAction::Move:
+        WindowManager::the().start_window_move(*this, Screen::the().cursor_location());
+        break;
+    case WindowMenuAction::Close:
+        request_close();
+        break;
+    case WindowMenuAction::ToggleMenubarVisibility: {
+        auto& item = *m_window_menu->item_by_identifier((unsigned)action);
+        frame().invalidate();
+        item.set_checked(!item.is_checked());
+        m_should_show_menubar = item.is_checked();
+        frame().invalidate();
+        recalculate_rect();
+        Compositor::the().invalidate_occlusions();
+        Compositor::the().invalidate_screen();
+        break;
+    }
     }
 }
 
@@ -765,7 +758,7 @@ Gfx::IntRect Window::tiled_rect(WindowTileType tiled) const
     VERIFY(tiled != WindowTileType::None);
 
     int frame_width = (m_frame.rect().width() - m_rect.width()) / 2;
-    int title_bar_height = m_frame.title_bar_rect().height();
+    int titlebar_height = m_frame.titlebar_rect().height();
     int menu_height = WindowManager::the().maximized_window_rect(*this).y();
     int max_height = WindowManager::the().maximized_window_rect(*this).height();
 
@@ -783,33 +776,33 @@ Gfx::IntRect Window::tiled_rect(WindowTileType tiled) const
     case WindowTileType::Top:
         return Gfx::IntRect(0,
             menu_height,
-            Screen::the().width() - frame_width,
-            (max_height - title_bar_height) / 2 - frame_width);
+            Screen::the().width(),
+            (max_height - titlebar_height) / 2 - frame_width);
     case WindowTileType::Bottom:
         return Gfx::IntRect(0,
-            menu_height + (title_bar_height + max_height) / 2 + frame_width,
-            Screen::the().width() - frame_width,
-            (max_height - title_bar_height) / 2 - frame_width);
+            menu_height + (titlebar_height + max_height) / 2 + frame_width,
+            Screen::the().width(),
+            (max_height - titlebar_height) / 2 - frame_width);
     case WindowTileType::TopLeft:
         return Gfx::IntRect(0,
             menu_height,
             Screen::the().width() / 2 - frame_width,
-            (max_height - title_bar_height) / 2 - frame_width);
+            (max_height - titlebar_height) / 2 - frame_width);
     case WindowTileType::TopRight:
         return Gfx::IntRect(Screen::the().width() / 2 + frame_width,
             menu_height,
             Screen::the().width() / 2 - frame_width,
-            (max_height - title_bar_height) / 2 - frame_width);
+            (max_height - titlebar_height) / 2 - frame_width);
     case WindowTileType::BottomLeft:
         return Gfx::IntRect(0,
-            menu_height + (title_bar_height + max_height) / 2 + frame_width,
+            menu_height + (titlebar_height + max_height) / 2 + frame_width,
             Screen::the().width() / 2 - frame_width,
-            (max_height - title_bar_height) / 2);
+            (max_height - titlebar_height) / 2 - frame_width);
     case WindowTileType::BottomRight:
         return Gfx::IntRect(Screen::the().width() / 2 + frame_width,
-            menu_height + (title_bar_height + max_height) / 2 + frame_width,
+            menu_height + (titlebar_height + max_height) / 2 + frame_width,
             Screen::the().width() / 2 - frame_width,
-            (max_height - title_bar_height) / 2);
+            (max_height - titlebar_height) / 2 - frame_width);
     default:
         VERIFY_NOT_REACHED();
     }
@@ -936,7 +929,7 @@ bool Window::is_modal() const
     return true;
 }
 
-void Window::set_progress(int progress)
+void Window::set_progress(Optional<int> progress)
 {
     if (m_progress == progress)
         return;
@@ -973,11 +966,13 @@ bool Window::hit_test(const Gfx::IntPoint& point, bool include_frame) const
     if (threshold == 0 || !m_backing_store || !m_backing_store->has_alpha_channel())
         return true;
     auto relative_point = point.translated(-rect().location()) * m_backing_store->scale();
-    auto color = m_backing_store->get_pixel(relative_point);
-    return color.alpha() >= threshold;
+    u8 alpha = 0xff;
+    if (m_backing_store->rect().contains(relative_point))
+        alpha = m_backing_store->get_pixel(relative_point).alpha();
+    return alpha >= threshold;
 }
 
-void Window::set_menubar(MenuBar* menubar)
+void Window::set_menubar(Menubar* menubar)
 {
     if (m_menubar == menubar)
         return;
@@ -990,9 +985,9 @@ void Window::set_menubar(MenuBar* menubar)
         Gfx::IntPoint next_menu_location { 0, 0 };
         auto menubar_rect = Gfx::WindowTheme::current().menubar_rect(Gfx::WindowTheme::WindowType::Normal, rect(), wm.palette(), 1);
         m_menubar->for_each_menu([&](Menu& menu) {
-            int text_width = wm.font().width(menu.name());
+            int text_width = wm.font().width(Gfx::parse_ampersand_string(menu.name()));
             menu.set_rect_in_window_menubar({ next_menu_location.x(), 0, text_width + menubar_menu_margin, menubar_rect.height() });
-            next_menu_location.move_by(menu.rect_in_window_menubar().width(), 0);
+            next_menu_location.translate_by(menu.rect_in_window_menubar().width(), 0);
             return IterationDecision::Continue;
         });
     }
@@ -1006,6 +1001,26 @@ void Window::invalidate_menubar()
         return;
     // FIXME: This invalidates way more than the menubar!
     frame().invalidate();
+}
+
+void Window::set_modified(bool modified)
+{
+    if (m_modified == modified)
+        return;
+
+    m_modified = modified;
+    WindowManager::the().notify_modified_changed(*this);
+    frame().set_button_icons();
+    frame().invalidate_titlebar();
+}
+
+String Window::computed_title() const
+{
+    String title = m_title;
+    title.replace("[*]", is_modified() ? " (*)" : "");
+    if (client() && client()->is_unresponsive())
+        return String::formatted("{} (Not responding)", title);
+    return title;
 }
 
 }

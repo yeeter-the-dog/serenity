@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Runtime/Error.h>
@@ -51,15 +31,15 @@ void Reference::put(GlobalObject& global_object, Value value)
 
     if (!base.is_object() && vm.in_strict_mode()) {
         if (base.is_nullish())
-            vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishAssignment, m_name.to_value(global_object.vm()).to_string_without_side_effects(), base.to_string_without_side_effects());
+            vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishSetProperty, m_name.to_value(vm).to_string_without_side_effects(), base.to_string_without_side_effects());
         else
-            vm.throw_exception<TypeError>(global_object, ErrorType::ReferencePrimitiveAssignment, m_name.to_value(global_object.vm()).to_string_without_side_effects(), base.typeof(), base.to_string_without_side_effects());
+            vm.throw_exception<TypeError>(global_object, ErrorType::ReferencePrimitiveSetProperty, m_name.to_value(vm).to_string_without_side_effects(), base.typeof(), base.to_string_without_side_effects());
         return;
     }
 
     if (base.is_nullish()) {
         // This will always fail the to_object() call below, let's throw the TypeError ourselves with a nice message instead.
-        vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishAssignment, m_name.to_value(global_object.vm()).to_string_without_side_effects(), base.to_string_without_side_effects());
+        vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishSetProperty, m_name.to_value(vm).to_string_without_side_effects(), base.to_string_without_side_effects());
         return;
     }
 
@@ -103,11 +83,47 @@ Value Reference::get(GlobalObject& global_object)
         return value;
     }
 
-    auto* object = base().to_object(global_object);
+    auto base = this->base();
+
+    if (base.is_nullish()) {
+        // This will always fail the to_object() call below, let's throw the TypeError ourselves with a nice message instead.
+        vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishGetProperty, m_name.to_value(vm).to_string_without_side_effects(), base.to_string_without_side_effects());
+        return {};
+    }
+
+    auto* object = base.to_object(global_object);
     if (!object)
         return {};
 
     return object->get(m_name).value_or(js_undefined());
+}
+
+bool Reference::delete_(GlobalObject& global_object)
+{
+    if (is_unresolvable())
+        return true;
+
+    auto& vm = global_object.vm();
+
+    if (is_local_variable() || is_global_variable()) {
+        if (is_local_variable())
+            return vm.delete_variable(m_name.to_string());
+        else
+            return global_object.delete_property(m_name);
+    }
+
+    auto base = this->base();
+
+    if (base.is_nullish()) {
+        // This will always fail the to_object() call below, let's throw the TypeError ourselves with a nice message instead.
+        vm.throw_exception<TypeError>(global_object, ErrorType::ReferenceNullishDeleteProperty, m_name.to_value(vm).to_string_without_side_effects(), base.to_string_without_side_effects());
+        return false;
+    }
+
+    auto* object = base.to_object(global_object);
+    VERIFY(object);
+
+    return object->delete_property(m_name);
 }
 
 }

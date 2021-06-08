@@ -1,33 +1,15 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
 #include <AK/Atomic.h>
 #include <AK/Badge.h>
+#include <AK/Concepts.h>
+#include <AK/Function.h>
 #include <AK/Noncopyable.h>
 #include <AK/Vector.h>
 
@@ -430,6 +412,15 @@ struct [[gnu::packed]] RegisterState {
     FlatPtr userspace_ss;
 };
 
+struct [[gnu::packed]] DebugRegisterState {
+    FlatPtr dr0;
+    FlatPtr dr1;
+    FlatPtr dr2;
+    FlatPtr dr3;
+    FlatPtr dr6;
+    FlatPtr dr7;
+};
+
 #if ARCH(I386)
 #    define REGISTER_STATE_SIZE (19 * 4)
 #else
@@ -476,7 +467,21 @@ void write_cr3(FlatPtr);
 void write_cr4(FlatPtr);
 void write_xcr0(u64);
 
+void read_debug_registers_into(DebugRegisterState&);
+void write_debug_registers_from(const DebugRegisterState&);
+void clear_debug_registers();
+FlatPtr read_dr0();
+void write_dr0(FlatPtr);
+FlatPtr read_dr1();
+void write_dr1(FlatPtr);
+FlatPtr read_dr2();
+void write_dr2(FlatPtr);
+FlatPtr read_dr3();
+void write_dr3(FlatPtr);
 FlatPtr read_dr6();
+void write_dr6(FlatPtr);
+FlatPtr read_dr7();
+void write_dr7(FlatPtr);
 
 static inline bool is_kernel_mode()
 {
@@ -569,23 +574,17 @@ struct MemoryManagerData;
 struct ProcessorMessageEntry;
 
 struct ProcessorMessage {
+    using CallbackFunction = Function<void()>;
+
     enum Type {
         FlushTlb,
         Callback,
-        CallbackWithData
     };
     Type type;
     volatile u32 refs; // atomic
     union {
         ProcessorMessage* next; // only valid while in the pool
-        struct {
-            void (*handler)();
-        } callback;
-        struct {
-            void* data;
-            void (*handler)(void*);
-            void (*free)(void*);
-        } callback_with_data;
+        alignas(CallbackFunction) u8 callback_storage[sizeof(CallbackFunction)];
         struct {
             const PageDirectory* page_directory;
             u8* ptr;
@@ -596,6 +595,17 @@ struct ProcessorMessage {
     volatile bool async;
 
     ProcessorMessageEntry* per_proc_entries;
+
+    CallbackFunction& callback_value()
+    {
+        return *bit_cast<CallbackFunction*>(&callback_storage);
+    }
+
+    void invoke_callback()
+    {
+        VERIFY(type == Type::Callback);
+        callback_value()();
+    }
 };
 
 struct ProcessorMessageEntry {
@@ -604,20 +614,27 @@ struct ProcessorMessageEntry {
 };
 
 struct DeferredCallEntry {
+    using HandlerFunction = Function<void()>;
+
     DeferredCallEntry* next;
-    union {
-        struct {
-            void (*handler)();
-        } callback;
-        struct {
-            void* data;
-            void (*handler)(void*);
-            void (*free)(void*);
-        } callback_with_data;
-    };
-    bool have_data;
+    alignas(HandlerFunction) u8 handler_storage[sizeof(HandlerFunction)];
     bool was_allocated;
+
+    HandlerFunction& handler_value()
+    {
+        return *bit_cast<HandlerFunction*>(&handler_storage);
+    }
+
+    void invoke_handler()
+    {
+        handler_value()();
+    }
 };
+
+class Processor;
+// Note: We only support processors at most at the moment,
+// so allocate 8 slots of inline capacity in the container.
+using ProcessorContainer = Array<Processor*, 8>;
 
 class Processor {
     friend class ProcessorInfo;
@@ -661,7 +678,7 @@ class Processor {
     void gdt_init();
     void write_raw_gdt_entry(u16 selector, u32 low, u32 high);
     void write_gdt_entry(u16 selector, Descriptor& descriptor);
-    static Vector<Processor*>& processors();
+    static ProcessorContainer& processors();
 
     static void smp_return_to_pool(ProcessorMessage& msg);
     static ProcessorMessage& smp_get_from_pool();
@@ -730,7 +747,7 @@ public:
 
     static size_t processor_count() { return processors().size(); }
 
-    template<typename Callback>
+    template<IteratorFunction<Processor&> Callback>
     static inline IterationDecision for_each(Callback callback)
     {
         auto& procs = processors();
@@ -738,6 +755,18 @@ public:
         for (size_t i = 0; i < count; i++) {
             if (callback(*procs[i]) == IterationDecision::Break)
                 return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    }
+
+    template<VoidFunction<Processor&> Callback>
+    static inline IterationDecision for_each(Callback callback)
+    {
+        auto& procs = processors();
+        size_t count = procs.size();
+        for (size_t i = 0; i < count; i++) {
+            if (procs[i] != nullptr)
+                callback(*procs[i]);
         }
         return IterationDecision::Continue;
     }
@@ -776,11 +805,6 @@ public:
         return *m_mm_data;
     }
 
-    ALWAYS_INLINE Thread* idle_thread() const
-    {
-        return m_idle_thread;
-    }
-
     ALWAYS_INLINE void set_idle_thread(Thread& idle_thread)
     {
         m_idle_thread = &idle_thread;
@@ -803,6 +827,12 @@ public:
         write_fs_u32(__builtin_offsetof(Processor, m_current_thread), FlatPtr(&current_thread));
     }
 
+    ALWAYS_INLINE static Thread* idle_thread()
+    {
+        // See comment in Processor::current_thread
+        return (Thread*)read_fs_u32(__builtin_offsetof(Processor, m_idle_thread));
+    }
+
     ALWAYS_INLINE u32 get_id() const
     {
         // NOTE: This variant should only be used when iterating over all
@@ -817,6 +847,11 @@ public:
     {
         // See comment in Processor::current_thread
         return read_fs_ptr(__builtin_offsetof(Processor, m_cpu));
+    }
+
+    ALWAYS_INLINE static bool is_bootstrap_processor()
+    {
+        return Processor::id() == 0;
     }
 
     ALWAYS_INLINE u32 raise_irq()
@@ -912,57 +947,12 @@ public:
     static void smp_enable();
     bool smp_process_pending_messages();
 
-    template<typename Callback>
-    static void smp_broadcast(Callback callback, bool async)
-    {
-        auto* data = new Callback(move(callback));
-        smp_broadcast(
-            [](void* data) {
-                (*reinterpret_cast<Callback*>(data))();
-            },
-            data,
-            [](void* data) {
-                delete reinterpret_cast<Callback*>(data);
-            },
-            async);
-    }
-    static void smp_broadcast(void (*callback)(), bool async);
-    static void smp_broadcast(void (*callback)(void*), void* data, void (*free_data)(void*), bool async);
-    template<typename Callback>
-    static void smp_unicast(u32 cpu, Callback callback, bool async)
-    {
-        auto* data = new Callback(move(callback));
-        smp_unicast(
-            cpu,
-            [](void* data) {
-                (*reinterpret_cast<Callback*>(data))();
-            },
-            data,
-            [](void* data) {
-                delete reinterpret_cast<Callback*>(data);
-            },
-            async);
-    }
-    static void smp_unicast(u32 cpu, void (*callback)(), bool async);
-    static void smp_unicast(u32 cpu, void (*callback)(void*), void* data, void (*free_data)(void*), bool async);
+    static void smp_broadcast(Function<void()>, bool async);
+    static void smp_unicast(u32 cpu, Function<void()>, bool async);
     static void smp_broadcast_flush_tlb(const PageDirectory*, VirtualAddress, size_t);
     static u32 smp_wake_n_idle_processors(u32 wake_count);
 
-    template<typename Callback>
-    static void deferred_call_queue(Callback callback)
-    {
-        auto* data = new Callback(move(callback));
-        deferred_call_queue(
-            [](void* data) {
-                (*reinterpret_cast<Callback*>(data))();
-            },
-            data,
-            [](void* data) {
-                delete reinterpret_cast<Callback*>(data);
-            });
-    }
-    static void deferred_call_queue(void (*callback)());
-    static void deferred_call_queue(void (*callback)(void*), void* data, void (*free_data)(void*));
+    static void deferred_call_queue(Function<void()> callback);
 
     ALWAYS_INLINE bool has_feature(CPUFeature f) const
     {
@@ -977,7 +967,7 @@ public:
     void exit_trap(TrapFrame& trap);
 
     [[noreturn]] void initialize_context_switching(Thread& initial_thread);
-    void switch_context(Thread*& from_thread, Thread*& to_thread);
+    NEVER_INLINE void switch_context(Thread*& from_thread, Thread*& to_thread);
     [[noreturn]] static void assume_context(Thread& thread, FlatPtr flags);
     u32 init_context(Thread& thread, bool leave_crit);
     static Vector<FlatPtr> capture_stack_trace(Thread& thread, size_t max_frames = 0);
@@ -1054,9 +1044,9 @@ struct TrapFrame {
 
 static_assert(TRAP_FRAME_SIZE == sizeof(TrapFrame));
 
-extern "C" void enter_trap_no_irq(TrapFrame*);
-extern "C" void enter_trap(TrapFrame*);
-extern "C" void exit_trap(TrapFrame*);
+extern "C" void enter_trap_no_irq(TrapFrame*) __attribute__((used));
+extern "C" void enter_trap(TrapFrame*) __attribute__((used));
+extern "C" void exit_trap(TrapFrame*) __attribute__((used));
 
 class MSR {
     uint32_t m_msr;

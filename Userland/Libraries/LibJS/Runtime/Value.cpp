@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/AllOf.h>
@@ -46,6 +26,7 @@
 #include <LibJS/Runtime/NumberObject.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/PrimitiveString.h>
+#include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/Symbol.h>
@@ -101,7 +82,7 @@ static String double_to_string(double d)
         builder.append(double_to_string(-d));
         return builder.to_string();
     }
-    if (d == INFINITY)
+    if (d == static_cast<double>(INFINITY))
         return "Infinity";
 
     StringBuilder number_string_builder;
@@ -216,14 +197,29 @@ static String double_to_string(double d)
     return builder.to_string();
 }
 
-bool Value::is_array() const
+// 7.2.2 IsArray, https://tc39.es/ecma262/#sec-isarray
+bool Value::is_array(GlobalObject& global_object) const
 {
-    return is_object() && as_object().is_array();
+    if (!is_object())
+        return false;
+    auto& object = as_object();
+    if (object.is_array())
+        return true;
+    if (is<ProxyObject>(object)) {
+        auto& proxy = static_cast<ProxyObject const&>(object);
+        if (proxy.is_revoked()) {
+            auto& vm = global_object.vm();
+            vm.throw_exception<TypeError>(global_object, ErrorType::ProxyRevoked);
+            return false;
+        }
+        return Value(&proxy.target()).is_array(global_object);
+    }
+    return false;
 }
 
 Array& Value::as_array()
 {
-    VERIFY(is_array());
+    VERIFY(is_object() && as_object().is_array());
     return static_cast<Array&>(*m_value.as_object);
 }
 
@@ -552,7 +548,7 @@ i32 Value::as_i32() const
 u32 Value::as_u32() const
 {
     VERIFY(as_double() >= 0);
-    return min((double)as_i32(), MAX_U32);
+    return min((u32)as_i32(), NumericLimits<u32>::max());
 }
 
 double Value::to_double(GlobalObject& global_object) const
@@ -561,6 +557,16 @@ double Value::to_double(GlobalObject& global_object) const
     if (global_object.vm().exception())
         return INVALID;
     return number.as_double();
+}
+
+StringOrSymbol Value::to_property_key(GlobalObject& global_object) const
+{
+    auto key = to_primitive(global_object, PreferredType::String);
+    if (global_object.vm().exception())
+        return {};
+    if (key.is_symbol())
+        return &key.as_symbol();
+    return to_string(global_object);
 }
 
 i32 Value::to_i32_slow_case(GlobalObject& global_object) const
@@ -576,7 +582,8 @@ i32 Value::to_i32_slow_case(GlobalObject& global_object) const
     auto int_val = floor(abs);
     if (signbit(value))
         int_val = -int_val;
-    auto int32bit = fmod(int_val, 4294967296.0);
+    auto remainder = fmod(int_val, 4294967296.0);
+    auto int32bit = remainder >= 0.0 ? remainder : remainder + 4294967296.0; // The notation “x modulo y” computes a value k of the same sign as y
     if (int32bit >= 2147483648.0)
         int32bit -= 4294967296.0;
     return static_cast<i32>(int32bit);
@@ -807,8 +814,13 @@ Value left_shift(GlobalObject& global_object, Value lhs, Value rhs)
         auto rhs_u32 = rhs_numeric.to_u32(global_object);
         return Value(lhs_i32 << rhs_u32);
     }
-    if (both_bigint(lhs_numeric, rhs_numeric))
-        TODO();
+    if (both_bigint(lhs_numeric, rhs_numeric)) {
+        auto multiplier_divisor = Crypto::SignedBigInteger { Crypto::NumberTheory::Power(Crypto::UnsignedBigInteger(2), rhs_numeric.as_bigint().big_integer().unsigned_value()) };
+        if (rhs_numeric.as_bigint().big_integer().is_negative())
+            return js_bigint(global_object.heap(), lhs_numeric.as_bigint().big_integer().divided_by(multiplier_divisor).quotient);
+        else
+            return js_bigint(global_object.heap(), lhs_numeric.as_bigint().big_integer().multiplied_by(multiplier_divisor));
+    }
     global_object.vm().throw_exception<TypeError>(global_object, ErrorType::BigIntBadOperatorOtherType, "left-shift");
     return {};
 }
@@ -833,8 +845,11 @@ Value right_shift(GlobalObject& global_object, Value lhs, Value rhs)
         auto rhs_u32 = rhs_numeric.to_u32(global_object);
         return Value(lhs_i32 >> rhs_u32);
     }
-    if (both_bigint(lhs_numeric, rhs_numeric))
-        TODO();
+    if (both_bigint(lhs_numeric, rhs_numeric)) {
+        auto rhs_negated = rhs_numeric.as_bigint().big_integer();
+        rhs_negated.negate();
+        return left_shift(global_object, lhs, js_bigint(global_object.heap(), rhs_negated));
+    }
     global_object.vm().throw_exception<TypeError>(global_object, ErrorType::BigIntBadOperatorOtherType, "right-shift");
     return {};
 }
@@ -1020,10 +1035,10 @@ Value in(GlobalObject& global_object, Value lhs, Value rhs)
         global_object.vm().throw_exception<TypeError>(global_object, ErrorType::InOperatorWithObject);
         return {};
     }
-    auto lhs_string = lhs.to_string(global_object);
+    auto lhs_property_key = lhs.to_property_key(global_object);
     if (global_object.vm().exception())
         return {};
-    return Value(rhs.as_object().has_property(lhs_string));
+    return Value(rhs.as_object().has_property(lhs_property_key));
 }
 
 Value instance_of(GlobalObject& global_object, Value lhs, Value rhs)
@@ -1391,4 +1406,16 @@ Object* species_constructor(GlobalObject& global_object, const Object& object, O
     vm.throw_exception<TypeError>(global_object, ErrorType::NotAConstructor, species.to_string_without_side_effects());
     return nullptr;
 }
+
+// 7.2.1 RequireObjectCoercible, https://tc39.es/ecma262/#sec-requireobjectcoercible
+Value require_object_coercible(GlobalObject& global_object, Value value)
+{
+    auto& vm = global_object.vm();
+    if (value.is_nullish()) {
+        vm.throw_exception<TypeError>(global_object, ErrorType::NotObjectCoercible, value.to_string_without_side_effects());
+        return {};
+    }
+    return value;
+}
+
 }

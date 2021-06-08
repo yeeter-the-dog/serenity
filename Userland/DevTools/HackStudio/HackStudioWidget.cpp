@@ -1,33 +1,12 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * Copyright (c) 2020, the SerenityOS developers
- * All rights reserved.
+ * Copyright (c) 2020-2021, the SerenityOS developers.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "HackStudioWidget.h"
-#include "CursorTool.h"
 #include "Debugger/DebugInfoWidget.h"
 #include "Debugger/Debugger.h"
 #include "Debugger/DisassemblyWidget.h"
@@ -35,23 +14,22 @@
 #include "Editor.h"
 #include "EditorWrapper.h"
 #include "FindInFilesWidget.h"
-#include "FormEditorWidget.h"
-#include "FormWidget.h"
 #include "Git/DiffViewer.h"
 #include "Git/GitWidget.h"
 #include "HackStudio.h"
 #include "HackStudioWidget.h"
 #include "Locator.h"
 #include "Project.h"
+#include "ProjectDeclarations.h"
 #include "TerminalWrapper.h"
-#include "WidgetTool.h"
-#include "WidgetTreeModel.h"
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
+#include <Kernel/API/InodeWatcherEvent.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
+#include <LibCore/FileWatcher.h>
 #include <LibDebug/DebugSession.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
@@ -65,7 +43,7 @@
 #include <LibGUI/ItemListModel.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Menu.h>
-#include <LibGUI/MenuBar.h>
+#include <LibGUI/Menubar.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/RegularEditingEngine.h>
 #include <LibGUI/Splitter.h>
@@ -74,20 +52,21 @@
 #include <LibGUI/TableView.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/TextEditor.h>
-#include <LibGUI/ToolBar.h>
-#include <LibGUI/ToolBarContainer.h>
+#include <LibGUI/Toolbar.h>
+#include <LibGUI/ToolbarContainer.h>
 #include <LibGUI/TreeView.h>
 #include <LibGUI/VimEditingEngine.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
-#include <LibThread/Lock.h>
-#include <LibThread/Thread.h>
+#include <LibThreading/Lock.h>
+#include <LibThreading/Thread.h>
 #include <LibVT/TerminalWidget.h>
 #include <fcntl.h>
 #include <spawn.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -102,13 +81,13 @@ HackStudioWidget::HackStudioWidget(const String& path_to_project)
 
     open_project(path_to_project);
 
-    auto& toolbar_container = add<GUI::ToolBarContainer>();
+    auto& toolbar_container = add<GUI::ToolbarContainer>();
 
     auto& outer_splitter = add<GUI::HorizontalSplitter>();
 
     auto& left_hand_splitter = outer_splitter.add<GUI::VerticalSplitter>();
     left_hand_splitter.set_fixed_width(150);
-    create_project_tree_view(left_hand_splitter);
+    create_project_tab(left_hand_splitter);
     m_project_tree_view_context_menu = create_project_tree_view_context_menu();
 
     create_open_files_view(left_hand_splitter);
@@ -118,8 +97,6 @@ HackStudioWidget::HackStudioWidget(const String& path_to_project)
 
     // Put a placeholder widget front & center since we don't have a file open yet.
     m_right_hand_stack->add<GUI::Widget>();
-
-    create_form_editor(*m_right_hand_stack);
 
     m_diff_viewer = m_right_hand_stack->add<DiffViewer>();
 
@@ -155,6 +132,24 @@ HackStudioWidget::HackStudioWidget(const String& path_to_project)
     initialize_debugger();
 
     create_toolbar(toolbar_container);
+
+    auto maybe_watcher = Core::FileWatcher::create();
+    if (maybe_watcher.is_error()) {
+        warnln("Couldn't create a file watcher, deleted files won't be noticed! Error: {}", maybe_watcher.error());
+    } else {
+        m_file_watcher = maybe_watcher.release_value();
+        m_file_watcher->on_change = [this](Core::FileWatcherEvent const& event) {
+            if (event.type != Core::FileWatcherEvent::Type::Deleted)
+                return;
+
+            if (event.event_path.starts_with(project().root_path())) {
+                String relative_path = LexicalPath::relative_path(event.event_path, project().root_path());
+                handle_external_file_deletion(relative_path);
+            } else {
+                handle_external_file_deletion(event.event_path);
+            }
+        };
+    }
 }
 
 void HackStudioWidget::update_actions()
@@ -177,12 +172,10 @@ void HackStudioWidget::update_actions()
 void HackStudioWidget::on_action_tab_change()
 {
     update_actions();
-    auto git_widget = m_action_tab_widget->active_widget();
-    if (!git_widget)
-        return;
-    if (StringView { "GitWidget" } != git_widget->class_name())
-        return;
-    reinterpret_cast<GitWidget*>(git_widget)->refresh();
+    if (auto* active_widget = m_action_tab_widget->active_widget()) {
+        if (is<GitWidget>(*active_widget))
+            static_cast<GitWidget&>(*active_widget).refresh();
+    }
 }
 
 void HackStudioWidget::open_project(const String& root_path)
@@ -198,38 +191,49 @@ void HackStudioWidget::open_project(const String& root_path)
         m_project_tree_view->update();
     }
     if (Debugger::is_initialized()) {
-        Debugger::the().reset_breakpoints();
+        auto& debugger = Debugger::the();
+        debugger.reset_breakpoints();
+        debugger.set_source_root(m_project->root_path());
     }
 }
 
-Vector<String> HackStudioWidget::selected_file_names() const
+Vector<String> HackStudioWidget::selected_file_paths() const
 {
     Vector<String> files;
     m_project_tree_view->selection().for_each_index([&](const GUI::ModelIndex& index) {
-        files.append(index.data().as_string());
+        String sub_path = index.data().as_string();
+
+        GUI::ModelIndex parent_or_invalid = index.parent();
+
+        while (parent_or_invalid.is_valid()) {
+            sub_path = String::formatted("{}/{}", parent_or_invalid.data().as_string(), sub_path);
+
+            parent_or_invalid = parent_or_invalid.parent();
+        }
+
+        files.append(sub_path);
     });
     return files;
 }
 
-void HackStudioWidget::open_file(const String& full_filename)
+bool HackStudioWidget::open_file(const String& full_filename)
 {
     String filename = full_filename;
     if (full_filename.starts_with(project().root_path())) {
         filename = LexicalPath::relative_path(full_filename, project().root_path());
     }
     dbgln("HackStudio is opening {}", filename);
-    if (Core::File::is_directory(filename))
-        return;
+    if (Core::File::is_directory(filename) || !Core::File::exists(filename))
+        return false;
 
-    if (!currently_open_file().is_empty()) {
+    if (!active_file().is_empty()) {
         // Since the file is previously open, it should always be in m_open_files.
-        VERIFY(m_open_files.find(currently_open_file()) != m_open_files.end());
-        auto previous_open_project_file = m_open_files.get(currently_open_file()).value();
+        VERIFY(m_open_files.find(active_file()) != m_open_files.end());
+        auto previous_open_project_file = m_open_files.get(active_file()).value();
 
         // Update the scrollbar values of the previous_open_project_file and save them to m_open_files.
         previous_open_project_file->vertical_scroll_value(current_editor().vertical_scrollbar().value());
         previous_open_project_file->horizontal_scroll_value(current_editor().horizontal_scrollbar().value());
-        m_open_files.set(currently_open_file(), previous_open_project_file);
     }
 
     RefPtr<ProjectFile> new_project_file = nullptr;
@@ -239,6 +243,14 @@ void HackStudioWidget::open_file(const String& full_filename)
         new_project_file = m_project->get_file(filename);
         m_open_files.set(filename, *new_project_file);
         m_open_files_vector.append(filename);
+
+        if (!m_file_watcher.is_null()) {
+            auto watch_result = m_file_watcher->add_watch(filename, Core::FileWatcherEvent::Type::Deleted);
+            if (watch_result.is_error()) {
+                warnln("Couldn't watch '{}'", filename);
+            }
+        }
+
         m_open_files_view->model()->update();
     }
 
@@ -258,18 +270,17 @@ void HackStudioWidget::open_file(const String& full_filename)
         set_edit_mode(EditMode::Text);
     }
 
-    m_currently_open_file = filename;
-
-    String relative_file_path = m_currently_open_file;
-    if (m_currently_open_file.starts_with(m_project->root_path()))
-        relative_file_path = m_currently_open_file.substring(m_project->root_path().length() + 1);
+    String relative_file_path = filename;
+    if (filename.starts_with(m_project->root_path()))
+        relative_file_path = filename.substring(m_project->root_path().length() + 1);
 
     window()->set_title(String::formatted("{} - {} - Hack Studio", relative_file_path, m_project->name()));
     m_project_tree_view->update();
 
-    current_editor_wrapper().filename_label().set_text(filename);
+    current_editor_wrapper().set_filename(filename);
 
     current_editor().set_focus(true);
+    return true;
 }
 
 EditorWrapper& HackStudioWidget::current_editor_wrapper()
@@ -315,25 +326,63 @@ NonnullRefPtr<GUI::Menu> HackStudioWidget::create_project_tree_view_context_menu
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_file_action()
 {
-    return GUI::Action::create("New file...", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"), [this](const GUI::Action&) {
+    return GUI::Action::create("New &File...", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"), [this](const GUI::Action&) {
         String filename;
         if (GUI::InputBox::show(window(), filename, "Enter name of new file:", "Add new file to project") != GUI::InputBox::ExecOK)
             return;
-        auto file = Core::File::construct(filename);
-        if (!file->open((Core::IODevice::OpenMode)(Core::IODevice::WriteOnly | Core::IODevice::MustBeNew))) {
-            GUI::MessageBox::show(window(), String::formatted("Failed to create '{}'", filename), "Error", GUI::MessageBox::Type::Error);
+
+        auto path_to_selected = selected_file_paths();
+
+        String filepath;
+
+        if (!path_to_selected.is_empty()) {
+            VERIFY(Core::File::exists(path_to_selected.first()));
+
+            LexicalPath selected(path_to_selected.first());
+
+            String dir_path;
+
+            if (Core::File::is_directory(selected.string()))
+                dir_path = selected.string();
+            else
+                dir_path = selected.dirname();
+
+            filepath = String::formatted("{}/", dir_path);
+        }
+
+        filepath = String::formatted("{}{}", filepath, filename);
+
+        auto file = Core::File::construct(filepath);
+        if (!file->open((Core::OpenMode)(Core::OpenMode::WriteOnly | Core::OpenMode::MustBeNew))) {
+            GUI::MessageBox::show(window(), String::formatted("Failed to create '{}'", filepath), "Error", GUI::MessageBox::Type::Error);
             return;
         }
-        open_file(filename);
+        open_file(filepath);
     });
 }
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_directory_action()
 {
-    return GUI::Action::create("New directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [this](const GUI::Action&) {
+    return GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [this](const GUI::Action&) {
         String directory_name;
         if (GUI::InputBox::show(window(), directory_name, "Enter name of new directory:", "Add new folder to project") != GUI::InputBox::ExecOK)
             return;
+
+        auto path_to_selected = selected_file_paths();
+
+        if (!path_to_selected.is_empty()) {
+            LexicalPath selected(path_to_selected.first());
+
+            String dir_path;
+
+            if (Core::File::is_directory(selected.string()))
+                dir_path = selected.string();
+            else
+                dir_path = selected.dirname();
+
+            directory_name = String::formatted("{}/{}", dir_path, directory_name);
+        }
+
         auto formatted_dir_name = LexicalPath::canonicalized_path(String::formatted("{}/{}", m_project->model().root_path(), directory_name));
         int rc = mkdir(formatted_dir_name.characters(), 0755);
         if (rc < 0) {
@@ -345,9 +394,8 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_directory_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_open_selected_action()
 {
-
     auto open_selected_action = GUI::Action::create("Open", [this](const GUI::Action&) {
-        auto files = selected_file_names();
+        auto files = selected_file_paths();
         for (auto& file : files)
             open_file(file);
     });
@@ -358,13 +406,14 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_open_selected_action()
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_delete_action()
 {
     auto delete_action = GUI::CommonActions::make_delete_action([this](const GUI::Action&) {
-        auto files = selected_file_names();
+        auto files = selected_file_paths();
         if (files.is_empty())
             return;
 
         String message;
         if (files.size() == 1) {
-            message = String::formatted("Really remove {} from disk?", LexicalPath(files[0]).basename());
+            LexicalPath file(files[0]);
+            message = String::formatted("Really remove {} from disk?", file.basename());
         } else {
             message = String::formatted("Really remove {} files from disk?", files.size());
         }
@@ -412,7 +461,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_delete_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_new_project_action()
 {
-    return GUI::Action::create("New project...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/hackstudio-project.png"), [this](const GUI::Action&) {
+    return GUI::Action::create("&New Project...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/hackstudio-project.png"), [this](const GUI::Action&) {
         auto dialog = NewProjectDialog::construct(window());
         dialog->set_icon(window()->icon());
         auto result = dialog->exec();
@@ -437,20 +486,20 @@ void HackStudioWidget::add_new_editor(GUI::Widget& parent)
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_switch_to_next_editor_action()
 {
-    return GUI::Action::create("Switch to next editor", { Mod_Ctrl, Key_E }, [this](auto&) {
+    return GUI::Action::create("Switch to &Next Editor", { Mod_Ctrl, Key_E }, [this](auto&) {
         if (m_all_editor_wrappers.size() <= 1)
             return;
-        Vector<EditorWrapper*> wrappers;
+        Vector<EditorWrapper&> wrappers;
         m_editors_splitter->for_each_child_of_type<EditorWrapper>([this, &wrappers](auto& child) {
-            wrappers.append(&child);
+            wrappers.append(child);
             return IterationDecision::Continue;
         });
         for (size_t i = 0; i < wrappers.size(); ++i) {
-            if (m_current_editor_wrapper.ptr() == wrappers[i]) {
+            if (m_current_editor_wrapper.ptr() == &wrappers[i]) {
                 if (i == wrappers.size() - 1)
-                    wrappers[0]->editor().set_focus(true);
+                    wrappers[0].editor().set_focus(true);
                 else
-                    wrappers[i + 1]->editor().set_focus(true);
+                    wrappers[i + 1].editor().set_focus(true);
             }
         }
     });
@@ -458,20 +507,20 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_switch_to_next_editor_action
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_switch_to_previous_editor_action()
 {
-    return GUI::Action::create("Switch to previous editor", { Mod_Ctrl | Mod_Shift, Key_E }, [this](auto&) {
+    return GUI::Action::create("Switch to &Previous Editor", { Mod_Ctrl | Mod_Shift, Key_E }, [this](auto&) {
         if (m_all_editor_wrappers.size() <= 1)
             return;
-        Vector<EditorWrapper*> wrappers;
+        Vector<EditorWrapper&> wrappers;
         m_editors_splitter->for_each_child_of_type<EditorWrapper>([this, &wrappers](auto& child) {
-            wrappers.append(&child);
+            wrappers.append(child);
             return IterationDecision::Continue;
         });
         for (int i = wrappers.size() - 1; i >= 0; --i) {
-            if (m_current_editor_wrapper.ptr() == wrappers[i]) {
+            if (m_current_editor_wrapper.ptr() == &wrappers[i]) {
                 if (i == 0)
-                    wrappers.last()->editor().set_focus(true);
+                    wrappers.last().editor().set_focus(true);
                 else
-                    wrappers[i - 1]->editor().set_focus(true);
+                    wrappers[i - 1].editor().set_focus(true);
             }
         }
     });
@@ -479,7 +528,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_switch_to_previous_editor_ac
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_remove_current_editor_action()
 {
-    return GUI::Action::create("Remove current editor", { Mod_Alt | Mod_Shift, Key_E }, [this](auto&) {
+    return GUI::Action::create("&Remove Current Editor", { Mod_Alt | Mod_Shift, Key_E }, [this](auto&) {
         if (m_all_editor_wrappers.size() <= 1)
             return;
         auto wrapper = m_current_editor_wrapper;
@@ -492,8 +541,8 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_remove_current_editor_action
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_open_action()
 {
-    return GUI::Action::create("Open project...", { Mod_Ctrl | Mod_Shift, Key_O }, Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"), [this](auto&) {
-        auto open_path = GUI::FilePicker::get_open_filepath(window(), "Open project");
+    return GUI::Action::create("&Open Project...", { Mod_Ctrl | Mod_Shift, Key_O }, Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"), [this](auto&) {
+        auto open_path = GUI::FilePicker::get_open_filepath(window(), "Open project", Core::StandardPaths::home_directory(), true);
         if (!open_path.has_value())
             return;
         open_project(open_path.value());
@@ -503,11 +552,11 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_open_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_save_action()
 {
-    return GUI::Action::create("Save", { Mod_Ctrl, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/save.png"), [this](auto&) {
-        if (m_currently_open_file.is_empty())
+    return GUI::CommonActions::make_save_action([&](auto&) {
+        if (active_file().is_empty())
             return;
 
-        current_editor().write_to_file(m_currently_open_file);
+        current_editor_wrapper().save();
 
         if (m_git_widget->initialized())
             m_git_widget->refresh();
@@ -516,7 +565,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_save_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_remove_current_terminal_action()
 {
-    return GUI::Action::create("Remove current Terminal", { Mod_Alt | Mod_Shift, Key_T }, [this](auto&) {
+    return GUI::Action::create("Remove &Current Terminal", { Mod_Alt | Mod_Shift, Key_T }, [this](auto&) {
         auto widget = m_action_tab_widget->active_widget();
         if (!widget)
             return;
@@ -532,7 +581,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_remove_current_terminal_acti
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_add_editor_action()
 {
-    return GUI::Action::create("Add new editor", { Mod_Ctrl | Mod_Alt, Key_E },
+    return GUI::Action::create("Add New &Editor", { Mod_Ctrl | Mod_Alt, Key_E },
         Gfx::Bitmap::load_from_file("/res/icons/16x16/app-text-editor.png"),
         [this](auto&) {
             add_new_editor(*m_editors_splitter);
@@ -542,7 +591,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_add_editor_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_add_terminal_action()
 {
-    return GUI::Action::create("Add new Terminal", { Mod_Ctrl | Mod_Alt, Key_T },
+    return GUI::Action::create("Add New &Terminal", { Mod_Ctrl | Mod_Alt, Key_T },
         Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"),
         [this](auto&) {
             auto& terminal_wrapper = m_action_tab_widget->add_tab<TerminalWrapper>("Terminal");
@@ -561,7 +610,7 @@ void HackStudioWidget::reveal_action_tab(GUI::Widget& widget)
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_debug_action()
 {
-    return GUI::Action::create("Debug", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-run.png"), [this](auto&) {
+    return GUI::Action::create("&Debug", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-run.png"), [this](auto&) {
         if (!Core::File::exists(get_project_executable_path())) {
             GUI::MessageBox::show(window(), String::formatted("Could not find file: {}. (did you build the project?)", get_project_executable_path()), "Error", GUI::MessageBox::Type::Error);
             return;
@@ -572,8 +621,9 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_debug_action()
         }
 
         Debugger::the().set_executable_path(get_project_executable_path());
-        m_debugger_thread = LibThread::Thread::construct(Debugger::start_static);
+        m_debugger_thread = Threading::Thread::construct(Debugger::start_static);
         m_debugger_thread->start();
+        m_stop_action->set_enabled(true);
     });
 }
 
@@ -596,7 +646,8 @@ void HackStudioWidget::initialize_debugger()
                 make<Core::DeferredInvocationEvent>(
                     [this, source_position, &regs](auto&) {
                         m_current_editor_in_execution = get_editor_of_file(source_position.value().file_path);
-                        m_current_editor_in_execution->editor().set_execution_position(source_position.value().line_number - 1);
+                        if (m_current_editor_in_execution)
+                            m_current_editor_in_execution->editor().set_execution_position(source_position.value().line_number - 1);
                         m_debug_info_widget->update_state(*Debugger::the().session(), regs);
                         m_debug_info_widget->set_debug_actions_enabled(true);
                         m_disassembly_widget->update_state(*Debugger::the().session(), regs);
@@ -609,16 +660,20 @@ void HackStudioWidget::initialize_debugger()
         [this]() {
             Core::EventLoop::main().post_event(*window(), make<Core::DeferredInvocationEvent>([this](auto&) {
                 m_debug_info_widget->set_debug_actions_enabled(false);
-                if (m_current_editor_in_execution) {
+                if (m_current_editor_in_execution)
                     m_current_editor_in_execution->editor().clear_execution_position();
-                }
             }));
             Core::EventLoop::wake();
         },
         [this]() {
             Core::EventLoop::main().post_event(*window(), make<Core::DeferredInvocationEvent>([this](auto&) {
+                m_debug_info_widget->set_debug_actions_enabled(false);
+                if (m_current_editor_in_execution)
+                    m_current_editor_in_execution->editor().clear_execution_position();
                 m_debug_info_widget->program_stopped();
                 m_disassembly_widget->program_stopped();
+                m_stop_action->set_enabled(false);
+                m_debugger_thread.clear();
                 HackStudioWidget::hide_action_tabs();
                 GUI::MessageBox::show(window(), "Program Exited", "Debugger", GUI::MessageBox::Type::Information);
             }));
@@ -638,18 +693,18 @@ String HackStudioWidget::get_full_path_of_serenity_source(const String& file)
     return String::formatted("{}/{}", serenity_sources_base, relative_path_builder.to_string());
 }
 
-NonnullRefPtr<EditorWrapper> HackStudioWidget::get_editor_of_file(const String& file_name)
+RefPtr<EditorWrapper> HackStudioWidget::get_editor_of_file(const String& filename)
 {
-
-    String file_path = file_name;
+    String file_path = filename;
 
     // TODO: We can probably do a more specific condition here, something like
     // "if (file.starts_with("../Libraries/") || file.starts_with("../AK/"))"
-    if (file_name.starts_with("../")) {
-        file_path = get_full_path_of_serenity_source(file_name);
+    if (filename.starts_with("../")) {
+        file_path = get_full_path_of_serenity_source(filename);
     }
 
-    open_file(file_path);
+    if (!open_file(file_path))
+        return nullptr;
     return current_editor_wrapper();
 }
 
@@ -663,16 +718,16 @@ String HackStudioWidget::get_project_executable_path() const
 
 void HackStudioWidget::build(TerminalWrapper& wrapper)
 {
-    if (m_currently_open_file.ends_with(".js"))
-        wrapper.run_command(String::formatted("js -A {}", m_currently_open_file));
+    if (active_file().ends_with(".js"))
+        wrapper.run_command(String::formatted("js -A {}", active_file()));
     else
         wrapper.run_command("make");
 }
 
 void HackStudioWidget::run(TerminalWrapper& wrapper)
 {
-    if (m_currently_open_file.ends_with(".js"))
-        wrapper.run_command(String::formatted("js {}", m_currently_open_file));
+    if (active_file().ends_with(".js"))
+        wrapper.run_command(String::formatted("js {}", active_file()));
     else
         wrapper.run_command("make run");
 }
@@ -692,9 +747,8 @@ void HackStudioWidget::set_current_editor_wrapper(RefPtr<EditorWrapper> editor_w
     m_current_editor_wrapper = editor_wrapper;
 }
 
-void HackStudioWidget::create_project_tree_view(GUI::Widget& parent)
+void HackStudioWidget::configure_project_tree_view()
 {
-    m_project_tree_view = parent.add<GUI::TreeView>();
     m_project_tree_view->set_model(m_project->model());
     m_project_tree_view->set_selection_mode(GUI::AbstractView::SelectionMode::MultiSelection);
 
@@ -731,94 +785,9 @@ void HackStudioWidget::create_open_files_view(GUI::Widget& parent)
     };
 }
 
-void HackStudioWidget::create_form_editor(GUI::Widget& parent)
-{
-    m_form_inner_container = parent.add<GUI::Widget>();
-    m_form_inner_container->set_layout<GUI::HorizontalBoxLayout>();
-    auto& form_widgets_toolbar = m_form_inner_container->add<GUI::ToolBar>(Orientation::Vertical, 26);
-    form_widgets_toolbar.set_fixed_width(38);
-
-    GUI::ActionGroup tool_actions;
-    tool_actions.set_exclusive(true);
-
-    auto cursor_tool_action = GUI::Action::create_checkable("Cursor", Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Cursor.png"), [this](auto&) {
-        m_form_editor_widget->set_tool(make<CursorTool>(*m_form_editor_widget));
-    });
-    cursor_tool_action->set_checked(true);
-    tool_actions.add_action(cursor_tool_action);
-
-    form_widgets_toolbar.add_action(cursor_tool_action);
-
-    GUI::WidgetClassRegistration::for_each([&, this](const GUI::WidgetClassRegistration& reg) {
-        constexpr size_t gui_namespace_prefix_length = sizeof("GUI::") - 1;
-        auto icon_path = String::formatted("/res/icons/hackstudio/G{}.png",
-            reg.class_name().substring(gui_namespace_prefix_length, reg.class_name().length() - gui_namespace_prefix_length));
-        if (!Core::File::exists(icon_path))
-            return;
-
-        auto action = GUI::Action::create_checkable(reg.class_name(), Gfx::Bitmap::load_from_file(icon_path), [&reg, this](auto&) {
-            m_form_editor_widget->set_tool(make<WidgetTool>(*m_form_editor_widget, reg));
-            auto widget = reg.construct();
-            m_form_editor_widget->form_widget().add_child(widget);
-            widget->set_relative_rect(30, 30, 30, 30);
-            m_form_editor_widget->model().update();
-        });
-        action->set_checked(false);
-        tool_actions.add_action(action);
-        form_widgets_toolbar.add_action(move(action));
-    });
-
-    auto& form_editor_inner_splitter = m_form_inner_container->add<GUI::HorizontalSplitter>();
-
-    m_form_editor_widget = form_editor_inner_splitter.add<FormEditorWidget>();
-
-    auto& form_editing_pane_container = form_editor_inner_splitter.add<GUI::VerticalSplitter>();
-    form_editing_pane_container.set_fixed_width(190);
-    form_editing_pane_container.set_layout<GUI::VerticalBoxLayout>();
-
-    auto add_properties_pane = [&](auto& text, auto& pane_widget) {
-        auto& wrapper = form_editing_pane_container.add<GUI::Widget>();
-        wrapper.set_layout<GUI::VerticalBoxLayout>();
-        auto& label = wrapper.add<GUI::Label>(text);
-        label.set_fill_with_background_color(true);
-        label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        label.set_font(Gfx::FontDatabase::default_bold_font());
-        label.set_fixed_height(16);
-        wrapper.add_child(pane_widget);
-    };
-
-    m_form_widget_tree_view = GUI::TreeView::construct();
-    m_form_widget_tree_view->set_model(m_form_editor_widget->model());
-    m_form_widget_tree_view->on_selection_change = [this] {
-        m_form_editor_widget->selection().disable_hooks();
-        m_form_editor_widget->selection().clear();
-        m_form_widget_tree_view->selection().for_each_index([this](auto& index) {
-            // NOTE: Make sure we don't add the FormWidget itself to the selection,
-            //       since that would allow you to drag-move the FormWidget.
-            if (index.internal_data() != &m_form_editor_widget->form_widget())
-                m_form_editor_widget->selection().add(*(GUI::Widget*)index.internal_data());
-        });
-        m_form_editor_widget->update();
-        m_form_editor_widget->selection().enable_hooks();
-    };
-
-    m_form_editor_widget->selection().on_add = [this](auto& widget) {
-        m_form_widget_tree_view->selection().add(m_form_editor_widget->model().index_for_widget(widget));
-    };
-    m_form_editor_widget->selection().on_remove = [this](auto& widget) {
-        m_form_widget_tree_view->selection().remove(m_form_editor_widget->model().index_for_widget(widget));
-    };
-    m_form_editor_widget->selection().on_clear = [this] {
-        m_form_widget_tree_view->selection().clear();
-    };
-
-    add_properties_pane("Form widget tree:", *m_form_widget_tree_view);
-    add_properties_pane("Widget properties:", *GUI::TableView::construct());
-}
-
 void HackStudioWidget::create_toolbar(GUI::Widget& parent)
 {
-    auto& toolbar = parent.add<GUI::ToolBar>();
+    auto& toolbar = parent.add<GUI::Toolbar>();
     toolbar.add_action(*m_new_file_action);
     toolbar.add_action(*m_new_directory_action);
     toolbar.add_action(*m_save_action);
@@ -845,7 +814,10 @@ void HackStudioWidget::create_toolbar(GUI::Widget& parent)
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_build_action()
 {
-    return GUI::Action::create("Build", { Mod_Ctrl, Key_B }, Gfx::Bitmap::load_from_file("/res/icons/16x16/build.png"), [this](auto&) {
+    return GUI::Action::create("&Build", { Mod_Ctrl, Key_B }, Gfx::Bitmap::load_from_file("/res/icons/16x16/build.png"), [this](auto&) {
+        if (warn_unsaved_changes("There are unsaved changes, do you want to save before building?") == ContinueDecision::No)
+            return;
+
         reveal_action_tab(*m_terminal_wrapper);
         build(*m_terminal_wrapper);
         m_stop_action->set_enabled(true);
@@ -854,7 +826,7 @@ NonnullRefPtr<GUI::Action> HackStudioWidget::create_build_action()
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_run_action()
 {
-    return GUI::Action::create("Run", { Mod_Ctrl, Key_R }, Gfx::Bitmap::load_from_file("/res/icons/16x16/program-run.png"), [this](auto&) {
+    return GUI::Action::create("&Run", { Mod_Ctrl, Key_R }, Gfx::Bitmap::load_from_file("/res/icons/16x16/program-run.png"), [this](auto&) {
         reveal_action_tab(*m_terminal_wrapper);
         run(*m_terminal_wrapper);
         m_stop_action->set_enabled(true);
@@ -886,38 +858,59 @@ void HackStudioWidget::create_action_tab(GUI::Widget& parent)
     });
 }
 
-void HackStudioWidget::create_app_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_project_tab(GUI::Widget& parent)
 {
-    auto& app_menu = menubar.add_menu("File");
-    app_menu.add_action(*m_new_project_action);
-    app_menu.add_action(*m_open_action);
-    app_menu.add_action(*m_save_action);
-    app_menu.add_separator();
-    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    m_project_tab = parent.add<GUI::TabWidget>();
+    m_project_tab->set_tab_position(GUI::TabWidget::TabPosition::Bottom);
+
+    auto& tree_view_container = m_project_tab->add_tab<GUI::Widget>("Files");
+    tree_view_container.set_layout<GUI::VerticalBoxLayout>();
+    tree_view_container.layout()->set_margins({ 2, 2, 2, 2 });
+
+    m_project_tree_view = tree_view_container.add<GUI::TreeView>();
+    configure_project_tree_view();
+
+    auto& class_view_container = m_project_tab->add_tab<GUI::Widget>("Classes");
+    class_view_container.set_layout<GUI::VerticalBoxLayout>();
+    class_view_container.layout()->set_margins({ 2, 2, 2, 2 });
+
+    m_class_view = class_view_container.add<ClassViewWidget>();
+
+    ProjectDeclarations::the().on_update = [this]() {
+        m_class_view->refresh();
+    };
+}
+
+void HackStudioWidget::create_file_menubar(GUI::Menubar& menubar)
+{
+    auto& file_menu = menubar.add_menu("&File");
+    file_menu.add_action(*m_new_project_action);
+    file_menu.add_action(*m_open_action);
+    file_menu.add_action(*m_save_action);
+    file_menu.add_separator();
+    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
     }));
 }
 
-void HackStudioWidget::create_project_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_project_menubar(GUI::Menubar& menubar)
 {
-    auto& project_menu = menubar.add_menu("Project");
+    auto& project_menu = menubar.add_menu("&Project");
     project_menu.add_action(*m_new_file_action);
     project_menu.add_action(*m_new_directory_action);
-    project_menu.add_separator();
-    project_menu.add_action(*create_set_autocomplete_mode_action());
 }
 
-void HackStudioWidget::create_edit_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_edit_menubar(GUI::Menubar& menubar)
 {
-    auto& edit_menu = menubar.add_menu("Edit");
-    edit_menu.add_action(GUI::Action::create("Find in files...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"), [this](auto&) {
+    auto& edit_menu = menubar.add_menu("&Edit");
+    edit_menu.add_action(GUI::Action::create("&Find in Files...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"), [this](auto&) {
         reveal_action_tab(*m_find_in_files_widget);
         m_find_in_files_widget->focus_textbox_and_select_all();
     }));
 
     edit_menu.add_separator();
 
-    auto vim_emulation_setting_action = GUI::Action::create_checkable("Vim emulation", { Mod_Ctrl | Mod_Shift | Mod_Alt, Key_V }, [this](auto& action) {
+    auto vim_emulation_setting_action = GUI::Action::create_checkable("&Vim Emulation", { Mod_Ctrl | Mod_Shift | Mod_Alt, Key_V }, [this](auto& action) {
         if (action.is_checked())
             current_editor().set_editing_engine(make<GUI::VimEditingEngine>());
         else
@@ -927,9 +920,9 @@ void HackStudioWidget::create_edit_menubar(GUI::MenuBar& menubar)
     edit_menu.add_action(vim_emulation_setting_action);
 }
 
-void HackStudioWidget::create_build_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_build_menubar(GUI::Menubar& menubar)
 {
-    auto& build_menu = menubar.add_menu("Build");
+    auto& build_menu = menubar.add_menu("&Build");
     build_menu.add_action(*m_build_action);
     build_menu.add_separator();
     build_menu.add_action(*m_run_action);
@@ -938,31 +931,31 @@ void HackStudioWidget::create_build_menubar(GUI::MenuBar& menubar)
     build_menu.add_action(*m_debug_action);
 }
 
-void HackStudioWidget::create_view_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_view_menubar(GUI::Menubar& menubar)
 {
-    auto hide_action_tabs_action = GUI::Action::create("Hide action tabs", { Mod_Ctrl | Mod_Shift, Key_X }, [this](auto&) {
+    auto hide_action_tabs_action = GUI::Action::create("&Hide Action Tabs", { Mod_Ctrl | Mod_Shift, Key_X }, [this](auto&) {
         hide_action_tabs();
     });
-    auto open_locator_action = GUI::Action::create("Open locator", { Mod_Ctrl, Key_K }, [this](auto&) {
+    auto open_locator_action = GUI::Action::create("Open &Locator", { Mod_Ctrl, Key_K }, [this](auto&) {
         m_locator->open();
     });
 
-    auto& view_menu = menubar.add_menu("View");
+    auto& view_menu = menubar.add_menu("&View");
     view_menu.add_action(hide_action_tabs_action);
     view_menu.add_action(open_locator_action);
     view_menu.add_separator();
 
     m_wrapping_mode_actions.set_exclusive(true);
-    auto& wrapping_mode_menu = view_menu.add_submenu("Wrapping mode");
-    m_no_wrapping_action = GUI::Action::create_checkable("No wrapping", [&](auto&) {
+    auto& wrapping_mode_menu = view_menu.add_submenu("&Wrapping Mode");
+    m_no_wrapping_action = GUI::Action::create_checkable("&No Wrapping", [&](auto&) {
         for (auto& wrapper : m_all_editor_wrappers)
             wrapper.editor().set_wrapping_mode(GUI::TextEditor::WrappingMode::NoWrap);
     });
-    m_wrap_anywhere_action = GUI::Action::create_checkable("Wrap anywhere", [&](auto&) {
+    m_wrap_anywhere_action = GUI::Action::create_checkable("Wrap &Anywhere", [&](auto&) {
         for (auto& wrapper : m_all_editor_wrappers)
             wrapper.editor().set_wrapping_mode(GUI::TextEditor::WrappingMode::WrapAnywhere);
     });
-    m_wrap_at_words_action = GUI::Action::create_checkable("Wrap at words", [&](auto&) {
+    m_wrap_at_words_action = GUI::Action::create_checkable("Wrap at &Words", [&](auto&) {
         for (auto& wrapper : m_all_editor_wrappers)
             wrapper.editor().set_wrapping_mode(GUI::TextEditor::WrappingMode::WrapAtWords);
     });
@@ -984,34 +977,30 @@ void HackStudioWidget::create_view_menubar(GUI::MenuBar& menubar)
     view_menu.add_action(*m_remove_current_terminal_action);
 }
 
-void HackStudioWidget::create_help_menubar(GUI::MenuBar& menubar)
+void HackStudioWidget::create_help_menubar(GUI::Menubar& menubar)
 {
-    auto& help_menu = menubar.add_menu("Help");
+    auto& help_menu = menubar.add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Hack Studio", GUI::Icon::default_icon("app-hack-studio"), window()));
 }
 
 NonnullRefPtr<GUI::Action> HackStudioWidget::create_stop_action()
 {
-    auto action = GUI::Action::create("Stop", Gfx::Bitmap::load_from_file("/res/icons/16x16/program-stop.png"), [this](auto&) {
-        m_terminal_wrapper->kill_running_command();
+    auto action = GUI::Action::create("&Stop", Gfx::Bitmap::load_from_file("/res/icons/16x16/program-stop.png"), [this](auto&) {
+        if (!Debugger::the().session()) {
+            m_terminal_wrapper->kill_running_command();
+            return;
+        }
+
+        Debugger::the().stop();
     });
 
     action->set_enabled(false);
     return action;
 }
 
-NonnullRefPtr<GUI::Action> HackStudioWidget::create_set_autocomplete_mode_action()
+void HackStudioWidget::initialize_menubar(GUI::Menubar& menubar)
 {
-    auto action = GUI::Action::create_checkable("AutoComplete C++ with Parser", [this](auto& action) {
-        get_language_client<LanguageClients::Cpp::ServerConnection>(project().root_path())->set_autocomplete_mode(action.is_checked() ? "Parser" : "Lexer");
-    });
-    action->set_checked(true);
-    return action;
-}
-
-void HackStudioWidget::initialize_menubar(GUI::MenuBar& menubar)
-{
-    create_app_menubar(menubar);
+    create_file_menubar(menubar);
     create_project_menubar(menubar);
     create_edit_menubar(menubar);
     create_build_menubar(menubar);
@@ -1019,10 +1008,37 @@ void HackStudioWidget::initialize_menubar(GUI::MenuBar& menubar)
     create_help_menubar(menubar);
 }
 
+void HackStudioWidget::handle_external_file_deletion(const String& filepath)
+{
+    m_open_files.remove(filepath);
+    m_open_files_vector.remove_all_matching(
+        [&filepath](const String& element) { return element == filepath; });
+
+    for (auto& editor_wrapper : m_all_editor_wrappers) {
+        Editor& editor = editor_wrapper.editor();
+        String editor_file_path = editor.code_document().file_path();
+        String relative_editor_file_path = LexicalPath::relative_path(editor_file_path, project().root_path());
+
+        if (relative_editor_file_path == filepath) {
+            if (m_open_files_vector.is_empty()) {
+                editor.set_document(CodeDocument::create());
+                editor_wrapper.set_filename("");
+            } else {
+                auto& first_path = m_open_files_vector[0];
+                auto& document = m_open_files.get(first_path).value()->code_document();
+                editor.set_document(document);
+                editor_wrapper.set_filename(first_path);
+            }
+        }
+    }
+
+    m_open_files_view->model()->update();
+}
+
 HackStudioWidget::~HackStudioWidget()
 {
     if (!m_debugger_thread.is_null()) {
-        Debugger::the().set_requested_debugger_action(Debugger::DebuggerAction::Exit);
+        Debugger::the().stop();
         dbgln("Waiting for debugger thread to terminate");
         auto rc = m_debugger_thread->join();
         if (rc.is_error()) {
@@ -1030,6 +1046,37 @@ HackStudioWidget::~HackStudioWidget()
             dbgln("error joining debugger thread");
         }
     }
+}
+
+HackStudioWidget::ContinueDecision HackStudioWidget::warn_unsaved_changes(const String& prompt)
+{
+    if (!any_document_is_dirty())
+        return ContinueDecision::Yes;
+
+    auto result = GUI::MessageBox::show(window(), prompt, "Unsaved changes", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel);
+
+    if (result == GUI::MessageBox::ExecCancel)
+        return ContinueDecision::No;
+
+    if (result == GUI::MessageBox::ExecYes) {
+        for (auto& editor_wrapper : m_all_editor_wrappers) {
+            if (editor_wrapper.document_dirty()) {
+                editor_wrapper.save();
+            }
+        }
+    }
+
+    return ContinueDecision::Yes;
+}
+
+bool HackStudioWidget::any_document_is_dirty() const
+{
+    for (auto& editor_wrapper : m_all_editor_wrappers) {
+        if (editor_wrapper.document_dirty()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }

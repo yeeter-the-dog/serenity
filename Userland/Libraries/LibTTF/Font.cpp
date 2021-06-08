@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Srimanta Barua <srimanta.barua1@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "AK/ByteBuffer.h"
@@ -225,15 +205,15 @@ GlyphHorizontalMetrics Hmtx::get_glyph_horizontal_metrics(u32 glyph_id) const
     };
 }
 
-RefPtr<Font> Font::load_from_file(const StringView& path, unsigned index)
+RefPtr<Font> Font::load_from_file(String path, unsigned index)
 {
-    auto file_or_error = Core::File::open(String(path), Core::IODevice::ReadOnly);
+    auto file_or_error = Core::File::open(move(path), Core::OpenMode::ReadOnly);
     if (file_or_error.is_error()) {
         dbgln("Could not open file: {}", file_or_error.error());
         return nullptr;
     }
     auto file = file_or_error.value();
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         dbgln("Could not open file");
         return nullptr;
     }
@@ -409,7 +389,7 @@ RefPtr<Font> Font::load_from_offset(ByteBuffer&& buffer, u32 offset)
         }
     }
 
-    return adopt(*new Font(move(buffer), move(head), move(name), move(hhea), move(maxp), move(hmtx), move(cmap), move(loca), move(glyf)));
+    return adopt_ref(*new Font(move(buffer), move(head), move(name), move(hhea), move(maxp), move(hmtx), move(cmap), move(loca), move(glyf)));
 }
 
 ScaledFontMetrics Font::metrics(float x_scale, float y_scale) const
@@ -521,7 +501,7 @@ bool Font::is_fixed_width() const
 {
     // FIXME: Read this information from the font file itself.
     // FIXME: Although, it appears some application do similar hacks
-    return glyph_metrics(glyph_id_for_codepoint('.'), 1, 1).advance_width == glyph_metrics(glyph_id_for_codepoint('X'), 1, 1).advance_width;
+    return glyph_metrics(glyph_id_for_code_point('.'), 1, 1).advance_width == glyph_metrics(glyph_id_for_code_point('X'), 1, 1).advance_width;
 }
 
 int ScaledFont::width(const StringView& string) const
@@ -533,8 +513,8 @@ int ScaledFont::width(const StringView& string) const
 int ScaledFont::width(const Utf8View& utf8) const
 {
     int width = 0;
-    for (u32 codepoint : utf8) {
-        u32 glyph_id = glyph_id_for_codepoint(codepoint);
+    for (u32 code_point : utf8) {
+        u32 glyph_id = glyph_id_for_code_point(code_point);
         auto metrics = glyph_metrics(glyph_id);
         width += metrics.advance_width;
     }
@@ -545,7 +525,7 @@ int ScaledFont::width(const Utf32View& utf32) const
 {
     int width = 0;
     for (size_t i = 0; i < utf32.length(); i++) {
-        u32 glyph_id = glyph_id_for_codepoint(utf32.code_points()[i]);
+        u32 glyph_id = glyph_id_for_code_point(utf32.code_points()[i]);
         auto metrics = glyph_metrics(glyph_id);
         width += metrics.advance_width;
     }
@@ -565,7 +545,7 @@ RefPtr<Gfx::Bitmap> ScaledFont::raster_glyph(u32 glyph_id) const
 
 Gfx::Glyph ScaledFont::glyph(u32 code_point) const
 {
-    auto id = glyph_id_for_codepoint(code_point);
+    auto id = glyph_id_for_code_point(code_point);
     auto bitmap = raster_glyph(id);
     auto metrics = glyph_metrics(id);
     return Gfx::Glyph(bitmap, metrics.left_side_bearing, metrics.advance_width, metrics.ascender);
@@ -573,21 +553,21 @@ Gfx::Glyph ScaledFont::glyph(u32 code_point) const
 
 u8 ScaledFont::glyph_width(size_t code_point) const
 {
-    auto id = glyph_id_for_codepoint(code_point);
+    auto id = glyph_id_for_code_point(code_point);
     auto metrics = glyph_metrics(id);
     return metrics.advance_width;
 }
 
 int ScaledFont::glyph_or_emoji_width(u32 code_point) const
 {
-    auto id = glyph_id_for_codepoint(code_point);
+    auto id = glyph_id_for_code_point(code_point);
     auto metrics = glyph_metrics(id);
     return metrics.advance_width;
 }
 
 u8 ScaledFont::glyph_fixed_width() const
 {
-    return glyph_metrics(glyph_id_for_codepoint(' ')).advance_width;
+    return glyph_metrics(glyph_id_for_code_point(' ')).advance_width;
 }
 
 }

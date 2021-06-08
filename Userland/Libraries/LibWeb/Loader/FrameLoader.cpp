@@ -1,31 +1,12 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <AK/LexicalPath.h>
+#include <AK/SourceGenerator.h>
 #include <LibGemini/Document.h>
 #include <LibGfx/ImageDecoder.h>
 #include <LibMarkdown/Document.h>
@@ -37,13 +18,13 @@
 #include <LibWeb/Loader/FrameLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Namespace.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/Page/Page.h>
 
 namespace Web {
 
-FrameLoader::FrameLoader(Frame& frame)
-    : m_frame(frame)
+FrameLoader::FrameLoader(BrowsingContext& browsing_context)
+    : m_browsing_context(browsing_context)
 {
 }
 
@@ -101,7 +82,7 @@ static bool build_image_document(DOM::Document& document, const ByteBuffer& data
     head_element->append_child(title_element);
 
     auto basename = LexicalPath(document.url().path()).basename();
-    auto title_text = adopt(*new DOM::Text(document, String::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())));
+    auto title_text = adopt_ref(*new DOM::Text(document, String::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())));
     title_element->append_child(title_text);
 
     auto body_element = document.create_element("body");
@@ -120,10 +101,8 @@ static bool build_gemini_document(DOM::Document& document, const ByteBuffer& dat
     auto gemini_document = Gemini::Document::parse(gemini_data, document.url());
     String html_data = gemini_document->render_to_html();
 
-#if GEMINI_DEBUG
-    dbgln("Gemini data:\n\"\"\"{}\"\"\"", gemini_data);
-    dbgln("Converted to HTML:\n\"\"\"{}\"\"\"", html_data);
-#endif
+    dbgln_if(GEMINI_DEBUG, "Gemini data:\n\"\"\"{}\"\"\"", gemini_data);
+    dbgln_if(GEMINI_DEBUG, "Converted to HTML:\n\"\"\"{}\"\"\"", html_data);
 
     HTML::HTMLDocumentParser parser(document, html_data, "utf-8");
     parser.run(document.url());
@@ -134,8 +113,8 @@ bool FrameLoader::parse_document(DOM::Document& document, const ByteBuffer& data
 {
     auto& mime_type = document.content_type();
     if (mime_type == "text/html" || mime_type == "image/svg+xml") {
-        HTML::HTMLDocumentParser parser(document, data, document.encoding());
-        parser.run(document.url());
+        auto parser = HTML::HTMLDocumentParser::create_with_uncertain_encoding(document, data);
+        parser->run(document.url());
         return true;
     }
     if (mime_type.starts_with("image/"))
@@ -157,14 +136,19 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
         return false;
     }
 
+    if (!m_browsing_context.is_frame_nesting_allowed(request.url())) {
+        dbgln("No further recursion is allowed for the frame, abort load!");
+        return false;
+    }
+
     auto& url = request.url();
 
-    set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
-
-    if (type == Type::Navigation) {
-        if (auto* page = frame().page())
+    if (type == Type::Navigation || type == Type::Reload) {
+        if (auto* page = browsing_context().page())
             page->client().page_did_start_loading(url);
     }
+
+    set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
 
     if (type == Type::IFrame)
         return true;
@@ -174,7 +158,7 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
         favicon_url.set_protocol(url.protocol());
         favicon_url.set_host(url.host());
         favicon_url.set_port(url.port());
-        favicon_url.set_path("/favicon.ico");
+        favicon_url.set_paths({ "favicon.ico" });
 
         ResourceLoader::the().load(
             favicon_url,
@@ -187,7 +171,7 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
                     return;
                 }
                 dbgln("Decoded favicon, {}", bitmap->size());
-                if (auto* page = frame().page())
+                if (auto* page = browsing_context().page())
                     page->client().page_did_change_favicon(*bitmap);
             });
     }
@@ -204,9 +188,7 @@ bool FrameLoader::load(const URL& url, Type type)
         return false;
     }
 
-    LoadRequest request;
-    request.set_url(url);
-
+    auto request = LoadRequest::create_for_url_on_page(url, browsing_context().page());
     return load(request, type);
 }
 
@@ -215,7 +197,7 @@ void FrameLoader::load_html(const StringView& html, const URL& url)
     auto document = DOM::Document::create(url);
     HTML::HTMLDocumentParser parser(document, html, "utf-8");
     parser.run(url);
-    frame().set_document(&parser.document());
+    browsing_context().set_document(&parser.document());
 }
 
 // FIXME: Use an actual templating engine (our own one when it's built, preferably
@@ -228,15 +210,14 @@ void FrameLoader::load_error_page(const URL& failed_url, const String& error)
         error_page_url,
         [this, failed_url, error](auto data, auto&, auto) {
             VERIFY(!data.is_null());
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-            auto html = String::format(
-                String::copy(data).characters(),
-                escape_html_entities(failed_url.to_string()).characters(),
-                escape_html_entities(error).characters());
-#pragma GCC diagnostic pop
-            auto document = HTML::parse_html_document(html, failed_url, "utf-8");
+            StringBuilder builder;
+            SourceGenerator generator { builder };
+            generator.set("failed_url", escape_html_entities(failed_url.to_string()));
+            generator.set("error", escape_html_entities(error));
+            generator.append(data);
+            auto document = HTML::parse_html_document(generator.as_string_view(), failed_url, "utf-8");
             VERIFY(document);
-            frame().set_document(document);
+            browsing_context().set_document(document);
         },
         [](auto& error, auto) {
             dbgln("Failed to load error page: {}", error);
@@ -256,34 +237,50 @@ void FrameLoader::resource_did_load()
     // FIXME: Also check HTTP status code before redirecting
     auto location = resource()->response_headers().get("Location");
     if (location.has_value()) {
+        if (m_redirects_count > maximum_redirects_allowed) {
+            m_redirects_count = 0;
+            load_error_page(url, "Too many redirects");
+            return;
+        }
+        m_redirects_count++;
         load(url.complete_url(location.value()), FrameLoader::Type::Navigation);
         return;
     }
+    m_redirects_count = 0;
 
-    dbgln("I believe this content has MIME type '{}', , encoding '{}'", resource()->mime_type(), resource()->encoding());
+    if (resource()->has_encoding()) {
+        dbgln("This content has MIME type '{}', encoding '{}'", resource()->mime_type(), resource()->encoding().value());
+    } else {
+        dbgln("This content has MIME type '{}', encoding unknown", resource()->mime_type());
+    }
 
     auto document = DOM::Document::create();
     document->set_url(url);
     document->set_encoding(resource()->encoding());
     document->set_content_type(resource()->mime_type());
 
-    frame().set_document(document);
+    browsing_context().set_document(document);
 
     if (!parse_document(*document, resource()->encoded_data())) {
         load_error_page(url, "Failed to parse content.");
         return;
     }
 
-    if (!url.fragment().is_empty())
-        frame().scroll_to_anchor(url.fragment());
+    // FIXME: Support multiple instances of the Set-Cookie response header.
+    auto set_cookie = resource()->response_headers().get("Set-Cookie");
+    if (set_cookie.has_value())
+        document->set_cookie(set_cookie.value(), Cookie::Source::Http);
 
-    if (auto* host_element = frame().host_element()) {
+    if (!url.fragment().is_empty())
+        browsing_context().scroll_to_anchor(url.fragment());
+
+    if (auto* host_element = browsing_context().host_element()) {
         // FIXME: Perhaps in the future we'll have a better common base class for <frame> and <iframe>
         VERIFY(is<HTML::HTMLIFrameElement>(*host_element));
-        downcast<HTML::HTMLIFrameElement>(*host_element).content_frame_did_load({});
+        downcast<HTML::HTMLIFrameElement>(*host_element).nested_browsing_context_did_load({});
     }
 
-    if (auto* page = frame().page())
+    if (auto* page = browsing_context().page())
         page->client().page_did_finish_loading(url);
 }
 

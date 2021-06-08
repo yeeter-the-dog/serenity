@@ -1,31 +1,12 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ChessWidget.h"
 #include "PromotionDialog.h"
+#include <AK/Random.h>
 #include <AK/String.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/File.h>
@@ -36,14 +17,9 @@
 #include <LibGfx/Path.h>
 #include <unistd.h>
 
-ChessWidget::ChessWidget(const StringView& set)
-{
-    set_piece_set(set);
-}
-
 ChessWidget::ChessWidget()
-    : ChessWidget("stelar7")
 {
+    set_piece_set("stelar7");
 }
 
 ChessWidget::~ChessWidget()
@@ -52,16 +28,20 @@ ChessWidget::~ChessWidget()
 
 void ChessWidget::paint_event(GUI::PaintEvent& event)
 {
-    GUI::Widget::paint_event(event);
+    GUI::Frame::paint_event(event);
 
     GUI::Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    size_t tile_width = width() / 8;
-    size_t tile_height = height() / 8;
-    unsigned coord_rank_file = (side() == Chess::Color::White) ? 0 : 7;
+    painter.translate(frame_thickness(), frame_thickness());
+
+    size_t tile_width = frame_inner_rect().width() / 8;
+    size_t tile_height = frame_inner_rect().height() / 8;
+    int coord_rank_file = (side() == Chess::Color::White) ? 0 : 7;
 
     Chess::Board& active_board = (m_playback ? board_playback() : board());
+
+    auto& coordinate_font = Gfx::FontDatabase::default_font().bold_variant();
 
     Chess::Square::for_each([&](Chess::Square sq) {
         Gfx::IntRect tile_rect;
@@ -84,10 +64,10 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
             auto shrunken_rect = tile_rect;
             shrunken_rect.shrink(4, 4);
             if (sq.rank == coord_rank_file)
-                painter.draw_text(shrunken_rect, coord.substring_view(0, 1), Gfx::FontDatabase::default_bold_font(), Gfx::TextAlignment::BottomRight, text_color);
+                painter.draw_text(shrunken_rect, coord.substring_view(0, 1), coordinate_font, Gfx::TextAlignment::BottomRight, text_color);
 
             if (sq.file == coord_rank_file)
-                painter.draw_text(shrunken_rect, coord.substring_view(1, 1), Gfx::FontDatabase::default_bold_font(), Gfx::TextAlignment::TopLeft, text_color);
+                painter.draw_text(shrunken_rect, coord.substring_view(1, 1), coordinate_font, Gfx::TextAlignment::TopLeft, text_color);
         }
 
         for (auto& m : m_board_markings) {
@@ -111,15 +91,18 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
         float dx = B.x() - A.x();
         float dy = A.y() - B.y();
         float phi = atan2f(dy, dx);
-        float hdx = h * cos(phi);
-        float hdy = h * sin(phi);
+        float hdx = h * cosf(phi);
+        float hdy = h * sinf(phi);
 
-        Gfx::FloatPoint A1(A.x() - (w1 / 2) * cos(M_PI_2 - phi), A.y() - (w1 / 2) * sin(M_PI_2 - phi));
-        Gfx::FloatPoint B3(A.x() + (w1 / 2) * cos(M_PI_2 - phi), A.y() + (w1 / 2) * sin(M_PI_2 - phi));
+        const auto cos_pi_2_phi = cosf(float { M_PI_2 } - phi);
+        const auto sin_pi_2_phi = sinf(float { M_PI_2 } - phi);
+
+        Gfx::FloatPoint A1(A.x() - (w1 / 2) * cos_pi_2_phi, A.y() - (w1 / 2) * sin_pi_2_phi);
+        Gfx::FloatPoint B3(A.x() + (w1 / 2) * cos_pi_2_phi, A.y() + (w1 / 2) * sin_pi_2_phi);
         Gfx::FloatPoint A2(A1.x() + (dx - hdx), A1.y() - (dy - hdy));
         Gfx::FloatPoint B2(B3.x() + (dx - hdx), B3.y() - (dy - hdy));
-        Gfx::FloatPoint A3(A2.x() - w2 * cos(M_PI_2 - phi), A2.y() - w2 * sin(M_PI_2 - phi));
-        Gfx::FloatPoint B1(B2.x() + w2 * cos(M_PI_2 - phi), B2.y() + w2 * sin(M_PI_2 - phi));
+        Gfx::FloatPoint A3(A2.x() - w2 * cos_pi_2_phi, A2.y() - w2 * sin_pi_2_phi);
+        Gfx::FloatPoint B1(B2.x() + w2 * cos_pi_2_phi, B2.y() + w2 * sin_pi_2_phi);
 
         auto path = Gfx::Path();
         path.move_to(A);
@@ -180,11 +163,13 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
 
 void ChessWidget::mousedown_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mousedown_event(event);
+    if (!frame_inner_rect().contains(event.position()))
+        return;
 
     if (event.button() == GUI::MouseButton::Right) {
         if (m_dragging_piece) {
             m_dragging_piece = false;
+            set_override_cursor(Gfx::StandardCursor::None);
             m_available_moves.clear();
         } else {
             m_current_marking.from = mouse_to_square(event);
@@ -197,6 +182,7 @@ void ChessWidget::mousedown_event(GUI::MouseEvent& event)
     auto piece = board().get_piece(square);
     if (drag_enabled() && piece.color == board().turn() && !m_playback) {
         m_dragging_piece = true;
+        set_override_cursor(Gfx::StandardCursor::Drag);
         m_drag_point = event.position();
         m_moving_square = square;
 
@@ -213,7 +199,8 @@ void ChessWidget::mousedown_event(GUI::MouseEvent& event)
 
 void ChessWidget::mouseup_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mouseup_event(event);
+    if (!frame_inner_rect().contains(event.position()))
+        return;
 
     if (event.button() == GUI::MouseButton::Right) {
         m_current_marking.secondary_color = event.shift();
@@ -234,6 +221,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
         return;
 
     m_dragging_piece = false;
+    set_override_cursor(Gfx::StandardCursor::Hand);
     m_available_moves.clear();
 
     auto target_square = mouse_to_square(event);
@@ -297,6 +285,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
                 VERIFY_NOT_REACHED();
             }
             if (over) {
+                set_override_cursor(Gfx::StandardCursor::None);
                 set_drag_enabled(false);
                 update();
                 GUI::MessageBox::show(window(), msg, "Game Over", GUI::MessageBox::Type::Information);
@@ -311,9 +300,23 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
 
 void ChessWidget::mousemove_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mousemove_event(event);
-    if (!m_dragging_piece)
+    if (!frame_inner_rect().contains(event.position()))
         return;
+
+    if (m_engine && board().turn() != side())
+        return;
+
+    if (!m_dragging_piece) {
+        auto square = mouse_to_square(event);
+        if (!square.in_bounds())
+            return;
+        auto piece = board().get_piece(square);
+        if (piece.color == board().turn())
+            set_override_cursor(Gfx::StandardCursor::Hand);
+        else
+            set_override_cursor(Gfx::StandardCursor::None);
+        return;
+    }
 
     m_drag_point = event.position();
     update();
@@ -321,6 +324,7 @@ void ChessWidget::mousemove_event(GUI::MouseEvent& event)
 
 void ChessWidget::keydown_event(GUI::KeyEvent& event)
 {
+    set_override_cursor(Gfx::StandardCursor::None);
     switch (event.key()) {
     case KeyCode::Key_Left:
         playback_move(PlaybackDirection::Backward);
@@ -377,8 +381,8 @@ void ChessWidget::set_piece_set(const StringView& set)
 
 Chess::Square ChessWidget::mouse_to_square(GUI::MouseEvent& event) const
 {
-    size_t tile_width = width() / 8;
-    size_t tile_height = height() / 8;
+    int tile_width = frame_inner_rect().width() / 8;
+    int tile_height = frame_inner_rect().height() / 8;
 
     if (side() == Chess::Color::White) {
         return { 7 - (event.y() / tile_height), event.x() / tile_width };
@@ -399,7 +403,7 @@ void ChessWidget::reset()
     m_playback_move_number = 0;
     m_board_playback = Chess::Board();
     m_board = Chess::Board();
-    m_side = (arc4random() % 2) ? Chess::Color::White : Chess::Color::Black;
+    m_side = (get_random<u32>() % 2) ? Chess::Color::White : Chess::Color::Black;
     m_drag_enabled = true;
     input_engine_move();
     update();
@@ -500,7 +504,7 @@ String ChessWidget::get_fen() const
 
 bool ChessWidget::import_pgn(const StringView& import_path)
 {
-    auto file_or_error = Core::File::open(import_path, Core::File::OpenMode::ReadOnly);
+    auto file_or_error = Core::File::open(import_path, Core::OpenMode::ReadOnly);
     if (file_or_error.is_error()) {
         warnln("Couldn't open '{}': {}", import_path, file_or_error.error());
         return false;
@@ -605,7 +609,7 @@ bool ChessWidget::import_pgn(const StringView& import_path)
 
 bool ChessWidget::export_pgn(const StringView& export_path) const
 {
-    auto file_or_error = Core::File::open(export_path, Core::File::WriteOnly);
+    auto file_or_error = Core::File::open(export_path, Core::OpenMode::WriteOnly);
     if (file_or_error.is_error()) {
         warnln("Couldn't open '{}': {}", export_path, file_or_error.error());
         return false;

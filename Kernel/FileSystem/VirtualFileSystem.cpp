@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/LexicalPath.h>
@@ -70,7 +50,7 @@ InodeIdentifier VFS::root_inode_id() const
 
 KResult VFS::mount(FS& file_system, Custody& mount_point, int flags)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
 
     auto& inode = mount_point.inode();
     dbgln("VFS: Mounting {} at {} (inode: {}) with flags {}",
@@ -86,7 +66,7 @@ KResult VFS::mount(FS& file_system, Custody& mount_point, int flags)
 
 KResult VFS::bind_mount(Custody& source, Custody& mount_point, int flags)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
 
     dbgln("VFS: Bind-mounting {} at {}", source.absolute_path(), mount_point.absolute_path());
     // FIXME: check that this is not already a mount point
@@ -97,7 +77,7 @@ KResult VFS::bind_mount(Custody& source, Custody& mount_point, int flags)
 
 KResult VFS::remount(Custody& mount_point, int new_flags)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
 
     dbgln("VFS: Remounting {}", mount_point.absolute_path());
 
@@ -111,14 +91,13 @@ KResult VFS::remount(Custody& mount_point, int new_flags)
 
 KResult VFS::unmount(Inode& guest_inode)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     dbgln("VFS: unmount called with inode {}", guest_inode.identifier());
 
     for (size_t i = 0; i < m_mounts.size(); ++i) {
         auto& mount = m_mounts.at(i);
         if (&mount.guest() == &guest_inode) {
-            auto result = mount.guest_fs().prepare_to_unmount();
-            if (result.is_error()) {
+            if (auto result = mount.guest_fs().prepare_to_unmount(); result.is_error()) {
                 dbgln("VFS: Failed to unmount!");
                 return result;
             }
@@ -151,6 +130,11 @@ bool VFS::mount_root(FS& file_system)
     dmesgln("VFS: mounted root from {} ({})", file_system.class_name(), static_cast<FileBackedFS&>(file_system).file_description().absolute_path());
 
     m_mounts.append(move(mount));
+
+    auto custody_or_error = Custody::try_create(nullptr, "", *m_root_inode, root_mount_flags);
+    if (custody_or_error.is_error())
+        return false;
+    m_root_custody = custody_or_error.release_value();
     return true;
 }
 
@@ -230,12 +214,10 @@ KResult VFS::utime(StringView path, Custody& base, time_t atime, time_t mtime)
     if (custody.is_readonly())
         return EROFS;
 
-    int error = inode.set_atime(atime);
-    if (error < 0)
-        return KResult((ErrnoCode)-error);
-    error = inode.set_mtime(mtime);
-    if (error < 0)
-        return KResult((ErrnoCode)-error);
+    if (auto result = inode.set_atime(atime); result.is_error())
+        return result;
+    if (auto result = inode.set_mtime(mtime); result.is_error())
+        return result;
     return KSuccess;
 }
 
@@ -254,19 +236,16 @@ KResultOr<NonnullRefPtr<FileDescription>> VFS::open(StringView path, int options
 
     RefPtr<Custody> parent_custody;
     auto custody_or_error = resolve_path(path, base, &parent_custody, options);
-    if (options & O_CREAT) {
-        if (!parent_custody)
-            return ENOENT;
-        if (custody_or_error.is_error()) {
-            if (custody_or_error.error() != -ENOENT)
-                return custody_or_error.error();
+    if (custody_or_error.is_error()) {
+        // NOTE: ENOENT with a non-null parent custody signals us that the immediate parent
+        //       of the file exists, but the file itself does not.
+        if ((options & O_CREAT) && custody_or_error.error() == -ENOENT && parent_custody)
             return create(path, options, mode, *parent_custody, move(owner));
-        }
-        if (options & O_EXCL)
-            return EEXIST;
-    }
-    if (custody_or_error.is_error())
         return custody_or_error.error();
+    }
+
+    if ((options & O_CREAT) && (options & O_EXCL))
+        return EEXIST;
 
     auto& custody = *custody_or_error.value();
     auto& inode = custody.inode();
@@ -340,10 +319,10 @@ KResultOr<NonnullRefPtr<FileDescription>> VFS::open(StringView path, int options
         return EROFS;
 
     if (should_truncate_file) {
-        KResult result = inode.truncate(0);
-        if (result.is_error())
+        if (auto result = inode.truncate(0); result.is_error())
             return result;
-        inode.set_mtime(kgettimeofday().to_truncated_seconds());
+        if (auto result = inode.set_mtime(kgettimeofday().to_truncated_seconds()); result.is_error())
+            return result;
     }
     auto description = FileDescription::create(custody);
     if (!description.is_error()) {
@@ -381,8 +360,7 @@ KResult VFS::mknod(StringView path, mode_t mode, dev_t dev, Custody& base)
 KResultOr<NonnullRefPtr<FileDescription>> VFS::create(StringView path, int options, mode_t mode, Custody& parent_custody, Optional<UidAndGid> owner)
 {
     LexicalPath p(path);
-    auto result = validate_path_against_process_veil(String::formatted("{}/{}", parent_custody.absolute_path(), p.basename()), options);
-    if (result.is_error())
+    if (auto result = validate_path_against_process_veil(String::formatted("{}/{}", parent_custody.absolute_path(), p.basename()), options); result.is_error())
         return result;
 
     if (!is_socket(mode) && !is_fifo(mode) && !is_block_device(mode) && !is_character_device(mode)) {
@@ -404,8 +382,10 @@ KResultOr<NonnullRefPtr<FileDescription>> VFS::create(StringView path, int optio
     if (inode_or_error.is_error())
         return inode_or_error.error();
 
-    auto new_custody = Custody::create(&parent_custody, p.basename(), inode_or_error.value(), parent_custody.mount_flags());
-    auto description = FileDescription::create(*new_custody);
+    auto new_custody_or_error = Custody::try_create(&parent_custody, p.basename(), inode_or_error.value(), parent_custody.mount_flags());
+    if (new_custody_or_error.is_error())
+        return new_custody_or_error.error();
+    auto description = FileDescription::create(*new_custody_or_error.release_value());
     if (!description.is_error()) {
         description.value()->set_rw_mode(options);
         description.value()->set_file_flags(options);
@@ -423,12 +403,11 @@ KResult VFS::mkdir(StringView path, mode_t mode, Custody& base)
         path = path.substring_view(0, path.length() - 1);
 
     RefPtr<Custody> parent_custody;
-    auto result = resolve_path(path, base, &parent_custody);
-    if (!result.is_error())
+    if (auto result = resolve_path(path, base, &parent_custody); !result.is_error())
         return EEXIST;
-    if (!parent_custody)
+    else if (!parent_custody)
         return ENOENT;
-    if (result.error() != -ENOENT)
+    else if (result.error() != -ENOENT)
         return result.error();
 
     auto& parent_inode = parent_custody->inode();
@@ -523,6 +502,10 @@ KResult VFS::rename(StringView old_path, StringView new_path, Custody& base)
             return new_custody_or_error.error();
     }
 
+    if (!old_parent_custody || !new_parent_custody) {
+        return EPERM;
+    }
+
     auto& old_parent_inode = old_parent_custody->inode();
     auto& new_parent_inode = new_parent_custody->inode();
 
@@ -563,17 +546,14 @@ KResult VFS::rename(StringView old_path, StringView new_path, Custody& base)
         }
         if (new_inode.is_directory() && !old_inode.is_directory())
             return EISDIR;
-        auto result = new_parent_inode.remove_child(new_basename);
-        if (result.is_error())
+        if (auto result = new_parent_inode.remove_child(new_basename); result.is_error())
             return result;
     }
 
-    auto result = new_parent_inode.add_child(old_inode, new_basename, old_inode.mode());
-    if (result.is_error())
+    if (auto result = new_parent_inode.add_child(old_inode, new_basename, old_inode.mode()); result.is_error())
         return result;
 
-    result = old_parent_inode.remove_child(LexicalPath(old_path).basename());
-    if (result.is_error())
+    if (auto result = old_parent_inode.remove_child(LexicalPath(old_path).basename()); result.is_error())
         return result;
 
     return KSuccess;
@@ -609,8 +589,7 @@ KResult VFS::chown(Custody& custody, uid_t a_uid, gid_t a_gid)
 
     if (metadata.is_setuid() || metadata.is_setgid()) {
         dbgln_if(VFS_DEBUG, "VFS::chown(): Stripping SUID/SGID bits from {}", inode.identifier());
-        auto result = inode.chmod(metadata.mode & ~(04000 | 02000));
-        if (result.is_error())
+        if (auto result = inode.chmod(metadata.mode & ~(04000 | 02000)); result.is_error())
             return result;
     }
 
@@ -709,8 +688,7 @@ KResult VFS::unlink(StringView path, Custody& base)
     if (parent_custody->is_readonly())
         return EROFS;
 
-    auto result = parent_inode.remove_child(LexicalPath(path).basename());
-    if (result.is_error())
+    if (auto result = parent_inode.remove_child(LexicalPath(path).basename()); result.is_error())
         return result;
 
     return KSuccess;
@@ -740,9 +718,9 @@ KResult VFS::symlink(StringView target, StringView linkpath, Custody& base)
         return inode_or_error.error();
     auto& inode = inode_or_error.value();
     auto target_buffer = UserOrKernelBuffer::for_kernel_buffer(const_cast<u8*>((const u8*)target.characters_without_null_termination()));
-    ssize_t nwritten = inode->write_bytes(0, target.length(), target_buffer, nullptr);
-    if (nwritten < 0)
-        return KResult((ErrnoCode)-nwritten);
+    auto result = inode->write_bytes(0, target.length(), target_buffer, nullptr);
+    if (result.is_error())
+        return result.error();
     return KSuccess;
 }
 
@@ -786,12 +764,10 @@ KResult VFS::rmdir(StringView path, Custody& base)
     if (custody.is_readonly())
         return EROFS;
 
-    auto result = inode.remove_child(".");
-    if (result.is_error())
+    if (auto result = inode.remove_child("."); result.is_error())
         return result;
 
-    result = inode.remove_child("..");
-    if (result.is_error())
+    if (auto result = inode.remove_child(".."); result.is_error())
         return result;
 
     return parent_inode.remove_child(LexicalPath(path).basename());
@@ -848,21 +824,17 @@ void VFS::sync()
 
 Custody& VFS::root_custody()
 {
-    if (!m_root_custody)
-        m_root_custody = Custody::create(nullptr, "", *m_root_inode, root_mount_flags);
     return *m_root_custody;
 }
 
-const UnveilNode* VFS::find_matching_unveiled_path(StringView path)
+UnveilNode const& VFS::find_matching_unveiled_path(StringView path)
 {
+    VERIFY(Process::current()->veil_state() != VeilState::None);
     auto& unveil_root = Process::current()->unveiled_paths();
-    if (unveil_root.is_empty())
-        return nullptr;
 
     LexicalPath lexical_path { path };
     auto& path_parts = lexical_path.parts();
-    auto& last_matching_node = unveil_root.traverse_until_last_accessible_node(path_parts.begin(), path_parts.end());
-    return &last_matching_node;
+    return unveil_root.traverse_until_last_accessible_node(path_parts.begin(), path_parts.end());
 }
 
 KResult VFS::validate_path_against_process_veil(StringView path, int options)
@@ -876,22 +848,22 @@ KResult VFS::validate_path_against_process_veil(StringView path, int options)
     if (String(path).contains("/.."))
         return EINVAL;
 
-    auto* unveiled_path = find_matching_unveiled_path(path);
-    if (!unveiled_path) {
+    auto& unveiled_path = find_matching_unveiled_path(path);
+    if (unveiled_path.permissions() == UnveilAccess::None) {
         dbgln("Rejecting path '{}' since it hasn't been unveiled.", path);
         dump_backtrace();
         return ENOENT;
     }
 
     if (options & O_CREAT) {
-        if (!(unveiled_path->permissions() & UnveilAccess::CreateOrRemove)) {
+        if (!(unveiled_path.permissions() & UnveilAccess::CreateOrRemove)) {
             dbgln("Rejecting path '{}' since it hasn't been unveiled with 'c' permission.", path);
             dump_backtrace();
             return EACCES;
         }
     }
     if (options & O_UNLINK_INTERNAL) {
-        if (!(unveiled_path->permissions() & UnveilAccess::CreateOrRemove)) {
+        if (!(unveiled_path.permissions() & UnveilAccess::CreateOrRemove)) {
             dbgln("Rejecting path '{}' for unlink since it hasn't been unveiled with 'c' permission.", path);
             dump_backtrace();
             return EACCES;
@@ -900,13 +872,13 @@ KResult VFS::validate_path_against_process_veil(StringView path, int options)
     }
     if (options & O_RDONLY) {
         if (options & O_DIRECTORY) {
-            if (!(unveiled_path->permissions() & (UnveilAccess::Read | UnveilAccess::Browse))) {
+            if (!(unveiled_path.permissions() & (UnveilAccess::Read | UnveilAccess::Browse))) {
                 dbgln("Rejecting path '{}' since it hasn't been unveiled with 'r' or 'b' permissions.", path);
                 dump_backtrace();
                 return EACCES;
             }
         } else {
-            if (!(unveiled_path->permissions() & UnveilAccess::Read)) {
+            if (!(unveiled_path.permissions() & UnveilAccess::Read)) {
                 dbgln("Rejecting path '{}' since it hasn't been unveiled with 'r' permission.", path);
                 dump_backtrace();
                 return EACCES;
@@ -914,14 +886,14 @@ KResult VFS::validate_path_against_process_veil(StringView path, int options)
         }
     }
     if (options & O_WRONLY) {
-        if (!(unveiled_path->permissions() & UnveilAccess::Write)) {
+        if (!(unveiled_path.permissions() & UnveilAccess::Write)) {
             dbgln("Rejecting path '{}' since it hasn't been unveiled with 'w' permission.", path);
             dump_backtrace();
             return EACCES;
         }
     }
     if (options & O_EXEC) {
-        if (!(unveiled_path->permissions() & UnveilAccess::Execute)) {
+        if (!(unveiled_path.permissions() & UnveilAccess::Execute)) {
             dbgln("Rejecting path '{}' since it hasn't been unveiled with 'x' permission.", path);
             dump_backtrace();
             return EACCES;
@@ -937,8 +909,7 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path(StringView path, Custody& ba
         return custody_or_error.error();
 
     auto& custody = custody_or_error.value();
-    auto result = validate_path_against_process_veil(custody->absolute_path(), options);
-    if (result.is_error())
+    if (auto result = validate_path_against_process_veil(custody->absolute_path(), options); result.is_error())
         return result;
 
     return custody;
@@ -967,13 +938,19 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path_without_veil(StringView path
     if (path.is_empty())
         return EINVAL;
 
-    auto parts = path.split_view('/', true);
+    GenericLexer path_lexer(path);
     auto current_process = Process::current();
     auto& current_root = current_process->root_directory();
 
     NonnullRefPtr<Custody> custody = path[0] == '/' ? current_root : base;
+    bool extra_iteration = path[path.length() - 1] == '/';
 
-    for (size_t i = 0; i < parts.size(); ++i) {
+    while (!path_lexer.is_eof() || extra_iteration) {
+        if (path_lexer.is_eof())
+            extra_iteration = false;
+        auto part = path_lexer.consume_until('/');
+        path_lexer.consume_specific('/');
+
         Custody& parent = custody;
         auto parent_metadata = parent.inode().metadata();
         if (!parent_metadata.is_directory())
@@ -982,8 +959,7 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path_without_veil(StringView path
         if (!parent_metadata.may_execute(*current_process))
             return EACCES;
 
-        auto& part = parts[i];
-        bool have_more_parts = i + 1 < parts.size();
+        bool have_more_parts = !path_lexer.is_eof() || extra_iteration;
 
         if (part == "..") {
             // If we encounter a "..", take a step back, but don't go beyond the root.
@@ -1015,7 +991,11 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path_without_veil(StringView path
             mount_flags_for_child = mount->flags();
         }
 
-        custody = Custody::create(&parent, part, *child_inode, mount_flags_for_child);
+        auto new_custody_or_error = Custody::try_create(&parent, part, *child_inode, mount_flags_for_child);
+        if (new_custody_or_error.is_error())
+            return new_custody_or_error.error();
+
+        custody = new_custody_or_error.release_value();
 
         if (child_inode->metadata().is_symlink()) {
             if (!have_more_parts) {
@@ -1028,8 +1008,7 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path_without_veil(StringView path
             if (!safe_to_follow_symlink(*child_inode, parent_metadata))
                 return EACCES;
 
-            auto result = validate_path_against_process_veil(custody->absolute_path(), options);
-            if (result.is_error())
+            if (auto result = validate_path_against_process_veil(custody->absolute_path(), options); result.is_error())
                 return result;
 
             auto symlink_target = child_inode->resolve_as_link(parent, out_parent, options, symlink_recursion_level + 1);
@@ -1051,5 +1030,4 @@ KResultOr<NonnullRefPtr<Custody>> VFS::resolve_path_without_veil(StringView path
         *out_parent = custody->parent();
     return custody;
 }
-
 }

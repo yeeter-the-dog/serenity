@@ -1,28 +1,8 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -30,8 +10,10 @@
 #include <AK/FlyString.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullRefPtrVector.h>
+#include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
 #include <AK/String.h>
+#include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/PropertyName.h>
@@ -42,18 +24,20 @@ namespace JS {
 
 class VariableDeclaration;
 class FunctionDeclaration;
+class Identifier;
 
 template<class T, class... Args>
 static inline NonnullRefPtr<T>
 create_ast_node(SourceRange range, Args&&... args)
 {
-    return adopt(*new T(range, forward<Args>(args)...));
+    return adopt_ref(*new T(range, forward<Args>(args)...));
 }
 
 class ASTNode : public RefCounted<ASTNode> {
 public:
     virtual ~ASTNode() { }
     virtual Value execute(Interpreter&, GlobalObject&) const = 0;
+    virtual void generate_bytecode(Bytecode::Generator&) const;
     virtual void dump(int indent) const;
 
     const SourceRange& source_range() const { return m_source_range; }
@@ -92,6 +76,7 @@ public:
     {
     }
     Value execute(Interpreter&, GlobalObject&) const override { return {}; }
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 };
 
 class ErrorStatement final : public Statement {
@@ -113,6 +98,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     const Expression& expression() const { return m_expression; };
 
@@ -137,6 +123,7 @@ public:
     const NonnullRefPtrVector<Statement>& children() const { return m_children; }
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     void add_variables(NonnullRefPtrVector<VariableDeclaration>);
     void add_functions(NonnullRefPtrVector<FunctionDeclaration>);
@@ -205,10 +192,32 @@ public:
     Value execute(Interpreter&, GlobalObject&) const override { return {}; }
 };
 
+struct BindingPattern : RefCounted<BindingPattern> {
+    struct BindingProperty {
+        RefPtr<Identifier> name;
+        RefPtr<Identifier> alias;
+        RefPtr<BindingPattern> pattern;
+        RefPtr<Expression> initializer;
+        bool is_rest { false };
+    };
+
+    enum class Kind {
+        Array,
+        Object,
+    };
+
+    void dump(int indent) const;
+    template<typename C>
+    void for_each_assigned_name(C&& callback) const;
+
+    Vector<BindingProperty> properties;
+    Kind kind { Kind::Object };
+};
+
 class FunctionNode {
 public:
     struct Parameter {
-        FlyString name;
+        Variant<FlyString, NonnullRefPtr<BindingPattern>> binding;
         RefPtr<Expression> default_value;
         bool is_rest { false };
     };
@@ -264,6 +273,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 };
 
 class FunctionExpression final
@@ -320,6 +330,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     RefPtr<Expression> m_argument;
@@ -341,6 +352,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtr<Expression> m_predicate;
@@ -362,6 +374,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtr<Expression> m_test;
@@ -382,6 +395,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtr<Expression> m_test;
@@ -426,6 +440,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     RefPtr<ASTNode> m_init;
@@ -517,6 +532,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     BinaryOp m_op;
@@ -542,6 +558,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     LogicalOp m_op;
@@ -570,6 +587,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     UnaryOp m_op;
@@ -587,6 +605,7 @@ public:
 
     virtual void dump(int indent) const override;
     virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtrVector<Expression> m_expressions;
@@ -610,6 +629,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     bool m_value { false };
@@ -625,6 +645,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     Value m_value;
@@ -640,6 +661,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     String m_value;
@@ -656,6 +678,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     StringView value() const { return m_value; }
     bool is_use_strict_directive() const { return m_is_use_strict_directive; };
@@ -674,25 +697,26 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 };
 
 class RegExpLiteral final : public Literal {
 public:
-    explicit RegExpLiteral(SourceRange source_range, String content, String flags)
+    explicit RegExpLiteral(SourceRange source_range, String pattern, String flags)
         : Literal(move(source_range))
-        , m_content(content)
-        , m_flags(flags)
+        , m_pattern(move(pattern))
+        , m_flags(move(flags))
     {
     }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
-    const String& content() const { return m_content; }
+    const String& pattern() const { return m_pattern; }
     const String& flags() const { return m_flags; }
 
 private:
-    String m_content;
+    String m_pattern;
     String m_flags;
 };
 
@@ -709,6 +733,7 @@ public:
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
     virtual Reference to_reference(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     FlyString m_string;
@@ -835,6 +860,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     struct ThisAndCallee {
@@ -886,6 +912,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     AssignmentOp m_op;
@@ -927,25 +954,32 @@ class VariableDeclarator final : public ASTNode {
 public:
     VariableDeclarator(SourceRange source_range, NonnullRefPtr<Identifier> id)
         : ASTNode(move(source_range))
-        , m_id(move(id))
+        , m_target(move(id))
     {
     }
 
-    VariableDeclarator(SourceRange source_range, NonnullRefPtr<Identifier> id, RefPtr<Expression> init)
+    VariableDeclarator(SourceRange source_range, NonnullRefPtr<Identifier> target, RefPtr<Expression> init)
         : ASTNode(move(source_range))
-        , m_id(move(id))
+        , m_target(move(target))
         , m_init(move(init))
     {
     }
 
-    const Identifier& id() const { return m_id; }
+    VariableDeclarator(SourceRange source_range, Variant<NonnullRefPtr<Identifier>, NonnullRefPtr<BindingPattern>> target, RefPtr<Expression> init)
+        : ASTNode(move(source_range))
+        , m_target(move(target))
+        , m_init(move(init))
+    {
+    }
+
+    auto& target() const { return m_target; }
     const Expression* init() const { return m_init; }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
-    NonnullRefPtr<Identifier> m_id;
+    Variant<NonnullRefPtr<Identifier>, NonnullRefPtr<BindingPattern>> m_target;
     RefPtr<Expression> m_init;
 };
 
@@ -1018,6 +1052,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtrVector<ObjectProperty> m_properties;
@@ -1057,6 +1092,7 @@ public:
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     const NonnullRefPtrVector<Expression>& expressions() const { return m_expressions; }
     const NonnullRefPtrVector<Expression>& raw_strings() const { return m_raw_strings; }
@@ -1096,6 +1132,7 @@ public:
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
     virtual Reference to_reference(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     bool is_computed() const { return m_computed; }
     const Expression& object() const { return *m_object; }
@@ -1143,6 +1180,7 @@ public:
 
     virtual void dump(int indent) const override;
     virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
 private:
     NonnullRefPtr<Expression> m_test;
@@ -1272,6 +1310,7 @@ public:
     }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 
     const FlyString& target_label() const { return m_target_label; }
 
@@ -1287,6 +1326,19 @@ public:
     }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void generate_bytecode(Bytecode::Generator&) const override;
 };
+
+template<typename C>
+void BindingPattern::for_each_assigned_name(C&& callback) const
+{
+    for (auto& property : properties) {
+        if (property.name) {
+            callback(property.name->string());
+            continue;
+        }
+        property.pattern->template for_each_assigned_name(forward<C>(callback));
+    }
+}
 
 }

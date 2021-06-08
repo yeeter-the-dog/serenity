@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Interpreter.h>
@@ -48,12 +28,15 @@ void PromiseConstructor::initialize(GlobalObject& global_object)
     define_property(vm.names.length, Value(1));
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    define_native_function(vm.names.all, all, 1, attr);
-    define_native_function(vm.names.allSettled, all_settled, 1, attr);
-    define_native_function(vm.names.any, any, 1, attr);
-    define_native_function(vm.names.race, race, 1, attr);
+    // TODO: Implement these functions below and uncomment this.
+    // define_native_function(vm.names.all, all, 1, attr);
+    // define_native_function(vm.names.allSettled, all_settled, 1, attr);
+    // define_native_function(vm.names.any, any, 1, attr);
+    // define_native_function(vm.names.race, race, 1, attr);
     define_native_function(vm.names.reject, reject, 1, attr);
     define_native_function(vm.names.resolve, resolve, 1, attr);
+
+    define_native_property(vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 }
 
 Value PromiseConstructor::call()
@@ -130,6 +113,11 @@ JS_DEFINE_NATIVE_FUNCTION(PromiseConstructor::resolve)
         return {};
     auto value = vm.argument(0);
     return promise_resolve(global_object, *constructor, value);
+}
+
+JS_DEFINE_NATIVE_GETTER(PromiseConstructor::symbol_species_getter)
+{
+    return vm.this_value(global_object);
 }
 
 }

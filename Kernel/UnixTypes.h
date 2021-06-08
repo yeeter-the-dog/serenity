@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -57,6 +37,7 @@
 #define MS_REMOUNT (1 << 5)
 
 enum {
+    _SC_MONOTONIC_CLOCK,
     _SC_NPROCESSORS_CONF,
     _SC_NPROCESSORS_ONLN,
     _SC_OPEN_MAX,
@@ -66,9 +47,22 @@ enum {
     _SC_CLK_TCK,
 };
 
-#define PERF_EVENT_SAMPLE 0
-#define PERF_EVENT_MALLOC 1
-#define PERF_EVENT_FREE 2
+enum {
+    PERF_EVENT_SAMPLE = 1,
+    PERF_EVENT_MALLOC = 2,
+    PERF_EVENT_FREE = 4,
+    PERF_EVENT_MMAP = 8,
+    PERF_EVENT_MUNMAP = 16,
+    PERF_EVENT_PROCESS_CREATE = 32,
+    PERF_EVENT_PROCESS_EXEC = 64,
+    PERF_EVENT_PROCESS_EXIT = 128,
+    PERF_EVENT_THREAD_CREATE = 256,
+    PERF_EVENT_THREAD_EXIT = 512,
+    PERF_EVENT_CONTEXT_SWITCH = 1024,
+    PERF_EVENT_KMALLOC = 2048,
+    PERF_EVENT_KFREE = 4096,
+    PERF_EVENT_PAGE_FAULT = 8192,
+};
 
 #define WNOHANG 1
 #define WUNTRACED 2
@@ -451,20 +445,25 @@ struct termios {
     speed_t c_ospeed;
 };
 
+struct timespec {
+    time_t tv_sec; /* Seconds */
+    long tv_nsec;  /* Nanoseconds */
+};
+
 struct stat {
-    dev_t st_dev;         /* ID of device containing file */
-    ino_t st_ino;         /* inode number */
-    mode_t st_mode;       /* protection */
-    nlink_t st_nlink;     /* number of hard links */
-    uid_t st_uid;         /* user ID of owner */
-    gid_t st_gid;         /* group ID of owner */
-    dev_t st_rdev;        /* device ID (if special file) */
-    off_t st_size;        /* total size, in bytes */
-    blksize_t st_blksize; /* blocksize for file system I/O */
-    blkcnt_t st_blocks;   /* number of 512B blocks allocated */
-    time_t st_atime;      /* time of last access */
-    time_t st_mtime;      /* time of last modification */
-    time_t st_ctime;      /* time of last status change */
+    dev_t st_dev;            /* ID of device containing file */
+    ino_t st_ino;            /* inode number */
+    mode_t st_mode;          /* protection */
+    nlink_t st_nlink;        /* number of hard links */
+    uid_t st_uid;            /* user ID of owner */
+    gid_t st_gid;            /* group ID of owner */
+    dev_t st_rdev;           /* device ID (if special file) */
+    off_t st_size;           /* total size, in bytes */
+    blksize_t st_blksize;    /* blocksize for file system I/O */
+    blkcnt_t st_blocks;      /* number of 512B blocks allocated */
+    struct timespec st_atim; /* time of last access */
+    struct timespec st_mtim; /* time of last modification */
+    struct timespec st_ctim; /* time of last status change */
 };
 
 #define POLLIN (1u << 0)
@@ -502,6 +501,8 @@ struct pollfd {
 
 #define MSG_TRUNC 0x1
 #define MSG_CTRUNC 0x2
+#define MSG_PEEK 0x4
+#define MSG_OOB 0x8
 #define MSG_DONTWAIT 0x40
 
 #define SOL_SOCKET 1
@@ -530,6 +531,9 @@ enum {
 #define IPPROTO_UDP 17
 
 #define IP_TTL 2
+#define IP_MULTICAST_LOOP 3
+#define IP_ADD_MEMBERSHIP 4
+#define IP_DROP_MEMBERSHIP 5
 
 struct ucred {
     pid_t pid;
@@ -553,6 +557,7 @@ struct sockaddr_un {
 struct in_addr {
     uint32_t s_addr;
 };
+typedef uint32_t in_addr_t;
 
 struct sockaddr_in {
     int16_t sin_family;
@@ -560,6 +565,15 @@ struct sockaddr_in {
     struct in_addr sin_addr;
     char sin_zero[8];
 };
+
+struct ip_mreq {
+    struct in_addr imr_multiaddr;
+    struct in_addr imr_interface;
+};
+
+#define INADDR_ANY ((in_addr_t)0)
+#define INADDR_NONE ((in_addr_t)-1)
+#define INADDR_LOOPBACK 0x7f000001
 
 typedef u32 __u32;
 typedef u16 __u16;
@@ -573,11 +587,6 @@ typedef i32 suseconds_t;
 struct timeval {
     time_t tv_sec;
     suseconds_t tv_usec;
-};
-
-struct timespec {
-    time_t tv_sec;
-    long tv_nsec;
 };
 
 typedef enum {
@@ -677,6 +686,7 @@ struct rtentry {
 #define RTF_GATEWAY 0x2 /* the route is a gateway and not an end host */
 
 #define AT_FDCWD -100
+#define AT_SYMLINK_NOFOLLOW 0x100
 
 #define PURGE_ALL_VOLATILE 0x1
 #define PURGE_ALL_CLEAN_INODE 0x2
@@ -690,6 +700,8 @@ struct rtentry {
 #define PT_PEEK 7
 #define PT_POKE 8
 #define PT_SETREGS 9
+#define PT_POKEDEBUG 10
+#define PT_PEEKDEBUG 11
 
 // Used in struct dirent
 enum {
@@ -711,4 +723,26 @@ enum {
 #define DT_SOCK DT_SOCK
     DT_WHT = 14
 #define DT_WHT DT_WHT
+};
+
+typedef uint64_t fsblkcnt_t;
+typedef uint64_t fsfilcnt_t;
+
+#define ST_RDONLY 0x1
+#define ST_NOSUID 0x2
+
+struct statvfs {
+    unsigned long f_bsize;
+    unsigned long f_frsize;
+    fsblkcnt_t f_blocks;
+    fsblkcnt_t f_bfree;
+    fsblkcnt_t f_bavail;
+
+    fsfilcnt_t f_files;
+    fsfilcnt_t f_ffree;
+    fsfilcnt_t f_favail;
+
+    unsigned long f_fsid;
+    unsigned long f_flag;
+    unsigned long f_namemax;
 };

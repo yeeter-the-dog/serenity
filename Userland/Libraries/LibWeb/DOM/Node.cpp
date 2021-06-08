@@ -1,27 +1,9 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -43,6 +25,7 @@
 #include <LibWeb/Layout/InitialContainingBlockBox.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TextNode.h>
+#include <LibWeb/Origin.h>
 
 namespace Web::DOM {
 
@@ -204,7 +187,7 @@ ExceptionOr<void> Node::ensure_pre_insertion_validity(NonnullRefPtr<Node> node, 
 
     if (is<Document>(this)) {
         if (is<DocumentFragment>(*node)) {
-            auto node_element_child_count = node->element_child_count();
+            auto node_element_child_count = downcast<DocumentFragment>(*node).child_element_count();
             if ((node_element_child_count > 1 || node->has_child_of_type<Text>())
                 || (node_element_child_count == 1 && (has_child_of_type<Element>() || is<DocumentType>(child.ptr()) /* FIXME: or child is non-null and a doctype is following child. */))) {
                 return DOM::HierarchyRequestError::create("Invalid node type for insertion");
@@ -250,9 +233,9 @@ void Node::insert_before(NonnullRefPtr<Node> node, RefPtr<Node> child, bool supp
         document().adopt_node(node_to_insert);
 
         if (!child)
-            TreeNode<Node>::append_child(node);
+            TreeNode<Node>::append_child(node_to_insert);
         else
-            TreeNode<Node>::insert_before(node, child);
+            TreeNode<Node>::insert_before(node_to_insert, child);
 
         // FIXME: If parent is a shadow host and node is a slottable, then assign a slot for node.
         // FIXME: If parent’s root is a shadow root, and parent is a slot whose assigned nodes is the empty list, then run signal a slot change for parent.
@@ -280,13 +263,11 @@ void Node::insert_before(NonnullRefPtr<Node> node, RefPtr<Node> child, bool supp
 }
 
 // https://dom.spec.whatwg.org/#concept-node-pre-insert
-NonnullRefPtr<Node> Node::pre_insert(NonnullRefPtr<Node> node, RefPtr<Node> child)
+ExceptionOr<NonnullRefPtr<Node>> Node::pre_insert(NonnullRefPtr<Node> node, RefPtr<Node> child)
 {
     auto validity_result = ensure_pre_insertion_validity(node, child);
-    if (validity_result.is_exception()) {
-        dbgln("Node::pre_insert: ensure_pre_insertion_validity failed: {}. (FIXME: throw as exception, see issue #6075)", validity_result.exception().message());
-        return node;
-    }
+    if (validity_result.is_exception())
+        return NonnullRefPtr<DOMException>(validity_result.exception());
 
     auto reference_child = child;
     if (reference_child == node)
@@ -297,12 +278,10 @@ NonnullRefPtr<Node> Node::pre_insert(NonnullRefPtr<Node> node, RefPtr<Node> chil
 }
 
 // https://dom.spec.whatwg.org/#concept-node-pre-remove
-NonnullRefPtr<Node> Node::pre_remove(NonnullRefPtr<Node> child)
+ExceptionOr<NonnullRefPtr<Node>> Node::pre_remove(NonnullRefPtr<Node> child)
 {
-    if (child->parent() != this) {
-        dbgln("Node::pre_remove: Child doesn't belong to this node. (FIXME: throw NotFoundError DOMException, see issue #6075)");
-        return child;
-    }
+    if (child->parent() != this)
+        return DOM::NotFoundError::create("Child does not belong to this node");
 
     child->remove();
 
@@ -310,7 +289,7 @@ NonnullRefPtr<Node> Node::pre_remove(NonnullRefPtr<Node> child)
 }
 
 // https://dom.spec.whatwg.org/#concept-node-append
-NonnullRefPtr<Node> Node::append_child(NonnullRefPtr<Node> node)
+ExceptionOr<NonnullRefPtr<Node>> Node::append_child(NonnullRefPtr<Node> node)
 {
     return pre_insert(node, nullptr);
 }
@@ -365,6 +344,128 @@ void Node::remove(bool suppress_observers)
     }
 
     parent->children_changed();
+}
+
+// https://dom.spec.whatwg.org/#concept-node-replace
+ExceptionOr<NonnullRefPtr<Node>> Node::replace_child(NonnullRefPtr<Node> node, NonnullRefPtr<Node> child)
+{
+    // NOTE: This differs slightly from ensure_pre_insertion_validity.
+    if (!is<Document>(this) && !is<DocumentFragment>(this) && !is<Element>(this))
+        return DOM::HierarchyRequestError::create("Can only insert into a document, document fragment or element");
+
+    if (node->is_host_including_inclusive_ancestor_of(*this))
+        return DOM::HierarchyRequestError::create("New node is an ancestor of this node");
+
+    if (child->parent() != this)
+        return DOM::NotFoundError::create("This node is not the parent of the given child");
+
+    // FIXME: All the following "Invalid node type for insertion" messages could be more descriptive.
+
+    if (!is<DocumentFragment>(*node) && !is<DocumentType>(*node) && !is<Element>(*node) && !is<Text>(*node) && !is<Comment>(*node) && !is<ProcessingInstruction>(*node))
+        return DOM::HierarchyRequestError::create("Invalid node type for insertion");
+
+    if ((is<Text>(*node) && is<Document>(this)) || (is<DocumentType>(*node) && !is<Document>(this)))
+        return DOM::HierarchyRequestError::create("Invalid node type for insertion");
+
+    if (is<Document>(this)) {
+        if (is<DocumentFragment>(*node)) {
+            auto node_element_child_count = downcast<DocumentFragment>(*node).child_element_count();
+            if ((node_element_child_count > 1 || node->has_child_of_type<Text>())
+                || (node_element_child_count == 1 && (first_child_of_type<Element>() != child /* FIXME: or a doctype is following child. */))) {
+                return DOM::HierarchyRequestError::create("Invalid node type for insertion");
+            }
+        } else if (is<Element>(*node)) {
+            if (first_child_of_type<Element>() != child /* FIXME: or a doctype is following child. */)
+                return DOM::HierarchyRequestError::create("Invalid node type for insertion");
+        } else if (is<DocumentType>(*node)) {
+            if (first_child_of_type<DocumentType>() != node /* FIXME: or an element is preceding child */)
+                return DOM::HierarchyRequestError::create("Invalid node type for insertion");
+        }
+    }
+
+    auto reference_child = child->next_sibling();
+    if (reference_child == node)
+        reference_child = node->next_sibling();
+
+    // FIXME: Let previousSibling be child’s previous sibling. (Currently unused so not included)
+    // FIXME: Let removedNodes be the empty set. (Currently unused so not included)
+
+    if (child->parent()) {
+        // FIXME: Set removedNodes to « child ».
+        child->remove(true);
+    }
+
+    // FIXME: Let nodes be node’s children if node is a DocumentFragment node; otherwise « node ». (Currently unused so not included)
+
+    insert_before(node, reference_child, true);
+
+    // FIXME: Queue a tree mutation record for parent with nodes, removedNodes, previousSibling, and referenceChild.
+
+    return child;
+}
+
+// https://dom.spec.whatwg.org/#concept-node-clone
+NonnullRefPtr<Node> Node::clone_node(Document* document, bool clone_children) const
+{
+    if (!document)
+        document = m_document;
+    RefPtr<Node> copy;
+    if (is<Element>(this)) {
+        auto& element = *downcast<Element>(this);
+        auto qualified_name = QualifiedName(element.local_name(), element.prefix(), element.namespace_());
+        auto element_copy = adopt_ref(*new Element(*document, move(qualified_name)));
+        element.for_each_attribute([&](auto& name, auto& value) {
+            element_copy->set_attribute(name, value);
+        });
+        copy = move(element_copy);
+    } else if (is<Document>(this)) {
+        auto document_ = downcast<Document>(this);
+        auto document_copy = Document::create(document_->url());
+        document_copy->set_encoding(document_->encoding());
+        document_copy->set_content_type(document_->content_type());
+        document_copy->set_origin(document_->origin());
+        document_copy->set_quirks_mode(document_->mode());
+        // FIXME: Set type ("xml" or "html")
+        copy = move(document_copy);
+    } else if (is<DocumentType>(this)) {
+        auto document_type = downcast<DocumentType>(this);
+        auto document_type_copy = adopt_ref(*new DocumentType(*document));
+        document_type_copy->set_name(document_type->name());
+        document_type_copy->set_public_id(document_type->public_id());
+        document_type_copy->set_system_id(document_type->system_id());
+        copy = move(document_type_copy);
+    } else if (is<Text>(this)) {
+        auto text = downcast<Text>(this);
+        auto text_copy = adopt_ref(*new Text(*document, text->data()));
+        copy = move(text_copy);
+    } else if (is<Comment>(this)) {
+        auto comment = downcast<Comment>(this);
+        auto comment_copy = adopt_ref(*new Comment(*document, comment->data()));
+        copy = move(comment_copy);
+    } else if (is<ProcessingInstruction>(this)) {
+        auto processing_instruction = downcast<ProcessingInstruction>(this);
+        auto processing_instruction_copy = adopt_ref(*new ProcessingInstruction(*document, processing_instruction->data(), processing_instruction->target()));
+        copy = move(processing_instruction_copy);
+    } else {
+        dbgln("clone_node() not implemented for NodeType {}", (u16)m_type);
+        TODO();
+    }
+    // FIXME: 4. Set copy’s node document and document to copy, if copy is a document, and set copy’s node document to document otherwise.
+    // FIXME: 5. Run any cloning steps defined for node in other applicable specifications and pass copy, node, document and the clone children flag if set, as parameters.
+    if (clone_children) {
+        for_each_child([&](auto& child) {
+            copy->append_child(child.clone_node(document, true));
+        });
+    }
+    return copy.release_nonnull();
+}
+
+// https://dom.spec.whatwg.org/#dom-node-clonenode
+ExceptionOr<NonnullRefPtr<Node>> Node::clone_node_binding(bool deep) const
+{
+    if (is<ShadowRoot>(*this))
+        return NotSupportedError::create("Cannot clone shadow root");
+    return clone_node(nullptr, deep);
 }
 
 void Node::set_document(Badge<Document>, Document& document)
@@ -454,20 +555,55 @@ void Node::remove_all_children(bool suppress_observers)
         child->remove(suppress_observers);
 }
 
+// https://dom.spec.whatwg.org/#dom-node-comparedocumentposition
+u16 Node::compare_document_position(RefPtr<Node> other)
+{
+    enum Position : u16 {
+        DOCUMENT_POSITION_EQUAL = 0,
+        DOCUMENT_POSITION_DISCONNECTED = 1,
+        DOCUMENT_POSITION_PRECEDING = 2,
+        DOCUMENT_POSITION_FOLLOWING = 4,
+        DOCUMENT_POSITION_CONTAINS = 8,
+        DOCUMENT_POSITION_CONTAINED_BY = 16,
+        DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32,
+    };
+
+    if (this == other)
+        return DOCUMENT_POSITION_EQUAL;
+
+    Node* node1 = other.ptr();
+    Node* node2 = this;
+
+    // FIXME: Once LibWeb supports attribute nodes fix to follow the specification.
+    VERIFY(node1->type() != NodeType::ATTRIBUTE_NODE && node2->type() != NodeType::ATTRIBUTE_NODE);
+
+    if ((node1 == nullptr || node2 == nullptr) || (node1->root() != node2->root()))
+        return DOCUMENT_POSITION_DISCONNECTED | DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC | (node1 > node2 ? DOCUMENT_POSITION_PRECEDING : DOCUMENT_POSITION_FOLLOWING);
+
+    if (node1->is_ancestor_of(*node2))
+        return DOCUMENT_POSITION_CONTAINS | DOCUMENT_POSITION_PRECEDING;
+
+    if (node2->is_ancestor_of(*node1))
+        return DOCUMENT_POSITION_CONTAINED_BY | DOCUMENT_POSITION_FOLLOWING;
+
+    if (node1->is_before(*node2))
+        return DOCUMENT_POSITION_PRECEDING;
+    else
+        return DOCUMENT_POSITION_FOLLOWING;
+}
+
 // https://dom.spec.whatwg.org/#concept-tree-host-including-inclusive-ancestor
 bool Node::is_host_including_inclusive_ancestor_of(const Node& other) const
 {
     return is_inclusive_ancestor_of(other) || (is<DocumentFragment>(other.root()) && downcast<DocumentFragment>(other.root())->host() && is_inclusive_ancestor_of(*downcast<DocumentFragment>(other.root())->host().ptr()));
 }
 
-size_t Node::element_child_count() const
+// https://dom.spec.whatwg.org/#dom-node-ownerdocument
+RefPtr<Document> Node::owner_document() const
 {
-    size_t count = 0;
-    for (auto* child = first_child(); child; child = child->next_sibling()) {
-        if (is<Element>(child))
-            ++count;
-    }
-    return count;
+    if (is_document())
+        return nullptr;
+    return m_document;
 }
 
 }

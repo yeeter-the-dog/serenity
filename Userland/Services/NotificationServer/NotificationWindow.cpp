@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "NotificationWindow.h"
@@ -46,7 +26,7 @@ static void update_notification_window_locations(const Gfx::IntRect& screen_rect
         auto& window = window_entry.value;
         Gfx::IntPoint new_window_location;
         if (last_window_rect.is_null())
-            new_window_location = screen_rect.top_right().translated(-window->rect().width() - 24, 26);
+            new_window_location = screen_rect.top_right().translated(-window->rect().width() - 24, 7);
         else
             new_window_location = last_window_rect.bottom_left().translated(0, 10);
         if (window->rect().location() != new_window_location) {
@@ -76,7 +56,7 @@ NotificationWindow::NotificationWindow(i32 client_id, const String& text, const 
     Gfx::IntRect rect;
     rect.set_width(220);
     rect.set_height(40);
-    rect.set_location(GUI::Desktop::the().rect().top_right().translated(-rect.width() - 24, 26));
+    rect.set_location(GUI::Desktop::the().rect().top_right().translated(-rect.width() - 24, 7));
 
     if (!lowest_notification_rect_on_screen.is_null())
         rect.set_location(lowest_notification_rect_on_screen.bottom_left().translated(0, 10));
@@ -102,7 +82,7 @@ NotificationWindow::NotificationWindow(i32 client_id, const String& text, const 
     left_container.set_layout<GUI::VerticalBoxLayout>();
 
     m_title_label = &left_container.add<GUI::Label>(title);
-    m_title_label->set_font(Gfx::FontDatabase::default_bold_font());
+    m_title_label->set_font(Gfx::FontDatabase::default_font().bold_variant());
     m_title_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);
     m_text_label = &left_container.add<GUI::Label>(text);
     m_text_label->set_text_alignment(Gfx::TextAlignment::CenterLeft);

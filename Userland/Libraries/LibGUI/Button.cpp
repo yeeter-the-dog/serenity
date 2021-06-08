@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -49,7 +29,7 @@ Button::Button(String text)
     REGISTER_ENUM_PROPERTY(
         "button_style", button_style, set_button_style, Gfx::ButtonStyle,
         { Gfx::ButtonStyle::Normal, "Normal" },
-        { Gfx::ButtonStyle::CoolBar, "CoolBar" });
+        { Gfx::ButtonStyle::Coolbar, "Coolbar" });
 }
 
 Button::~Button()
@@ -77,12 +57,12 @@ void Button::paint_event(PaintEvent& event)
 
     if (paint_pressed || is_checked()) {
         painter.translate(1, 1);
-    } else if (m_icon && is_enabled() && is_hovered() && button_style() == Gfx::ButtonStyle::CoolBar) {
+    } else if (m_icon && is_enabled() && is_hovered() && button_style() == Gfx::ButtonStyle::Coolbar) {
         auto shadow_color = palette().button().darkened(0.7f);
         painter.blit_filtered(icon_location.translated(1, 1), *m_icon, m_icon->rect(), [&shadow_color](auto) {
             return shadow_color;
         });
-        icon_location.move_by(-1, -1);
+        icon_location.translate_by(-1, -1);
     }
 
     if (m_icon) {
@@ -95,9 +75,9 @@ void Button::paint_event(PaintEvent& event)
             painter.blit_disabled(icon_location, *m_icon, m_icon->rect(), palette());
         }
     }
-    auto& font = is_checked() ? Gfx::FontDatabase::default_bold_font() : this->font();
+    auto& font = is_checked() ? this->font().bold_variant() : this->font();
     if (m_icon && !text().is_empty()) {
-        content_rect.move_by(m_icon->width() + icon_spacing(), 0);
+        content_rect.translate_by(m_icon->width() + icon_spacing(), 0);
         content_rect.set_width(content_rect.width() - m_icon->width() - icon_spacing());
     }
 
@@ -192,6 +172,14 @@ void Button::mousedown_event(MouseEvent& event)
         return;
     }
     AbstractButton::mousedown_event(event);
+}
+
+void Button::mousemove_event(MouseEvent& event)
+{
+    if (m_menu) {
+        return;
+    }
+    AbstractButton::mousemove_event(event);
 }
 
 }

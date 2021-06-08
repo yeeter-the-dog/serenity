@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -33,6 +13,7 @@
 #include <Kernel/Arch/x86/ISRStubs.h>
 #include <Kernel/Arch/x86/ProcessorInfo.h>
 #include <Kernel/Arch/x86/SafeMem.h>
+#include <Kernel/Assertions.h>
 #include <Kernel/Debug.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/APIC.h>
@@ -42,6 +23,7 @@
 #include <Kernel/Interrupts/UnhandledInterruptHandler.h>
 #include <Kernel/KSyms.h>
 #include <Kernel/Panic.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/Random.h>
 #include <Kernel/Thread.h>
@@ -66,20 +48,20 @@ static EntropySource s_entropy_source_interrupts { EntropySource::Static::Interr
 
 // The compiler can't see the calls to these functions inside assembly.
 // Declare them, to avoid dead code warnings.
-extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread);
-extern "C" void context_first_init(Thread* from_thread, Thread* to_thread, TrapFrame* trap);
-extern "C" u32 do_init_context(Thread* thread, u32 flags);
+extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread) __attribute__((used));
+extern "C" void context_first_init(Thread* from_thread, Thread* to_thread, TrapFrame* trap) __attribute__((used));
+extern "C" u32 do_init_context(Thread* thread, u32 flags) __attribute__((used));
 extern "C" void exit_kernel_thread(void);
-extern "C" void pre_init_finished(void);
-extern "C" void post_init_finished(void);
-extern "C" void handle_interrupt(TrapFrame*);
+extern "C" void pre_init_finished(void) __attribute__((used));
+extern "C" void post_init_finished(void) __attribute__((used));
+extern "C" void handle_interrupt(TrapFrame*) __attribute__((used));
 
 // clang-format off
 
 #if ARCH(I386)
 #define EH_ENTRY(ec, title)                         \
     extern "C" void title##_asm_entry();            \
-    extern "C" void title##_handler(TrapFrame*); \
+    extern "C" void title##_handler(TrapFrame*) __attribute__((used)); \
     asm(                                            \
         ".globl " #title "_asm_entry\n"             \
         "" #title "_asm_entry: \n"                  \
@@ -103,8 +85,8 @@ extern "C" void handle_interrupt(TrapFrame*);
         "    jmp common_trap_exit \n");
 
 #define EH_ENTRY_NO_CODE(ec, title)                 \
-    extern "C" void title##_handler(TrapFrame*); \
-    extern "C" void title##_asm_entry();            \
+    extern "C" void title##_asm_entry();	    \
+    extern "C" void title##_handler(TrapFrame*) __attribute__((used)); \
     asm(                                            \
         ".globl " #title "_asm_entry\n"             \
         "" #title "_asm_entry: \n"                  \
@@ -262,8 +244,11 @@ void page_fault_handler(TrapFrame* trap)
 
     auto current_thread = Thread::current();
 
-    if (current_thread)
+    if (current_thread) {
         current_thread->set_handling_page_fault(true);
+        PerformanceManager::add_page_fault_event(*current_thread, regs);
+    }
+
     ScopeGuard guard = [current_thread] {
         if (current_thread)
             current_thread->set_handling_page_fault(false);
@@ -295,7 +280,7 @@ void page_fault_handler(TrapFrame* trap)
             return;
         }
 
-        if (response != PageFaultResponse::OutOfMemory) {
+        if (response != PageFaultResponse::OutOfMemory && current_thread) {
             if (current_thread->has_signal_handler(SIGSEGV)) {
                 current_thread->send_urgent_signal_to_self(SIGSEGV);
                 return;
@@ -329,23 +314,23 @@ void page_fault_handler(TrapFrame* trap)
             dbgln("Note: Address {} looks like a possible nullptr dereference", VirtualAddress(fault_address));
         }
 
-        auto& current_process = current_thread->process();
-        if (current_process.is_user_process()) {
-            current_process.set_coredump_metadata("fault_address", String::formatted("{:p}", fault_address));
-            current_process.set_coredump_metadata("fault_type", fault.type() == PageFault::Type::PageNotPresent ? "NotPresent" : "ProtectionViolation");
-            String fault_access;
-            if (fault.is_instruction_fetch())
-                fault_access = "Execute";
-            else
-                fault_access = fault.access() == PageFault::Access::Read ? "Read" : "Write";
-            current_process.set_coredump_metadata("fault_access", fault_access);
+        if (current_thread) {
+            auto& current_process = current_thread->process();
+            if (current_process.is_user_process()) {
+                current_process.set_coredump_metadata("fault_address", String::formatted("{:p}", fault_address));
+                current_process.set_coredump_metadata("fault_type", fault.type() == PageFault::Type::PageNotPresent ? "NotPresent" : "ProtectionViolation");
+                String fault_access;
+                if (fault.is_instruction_fetch())
+                    fault_access = "Execute";
+                else
+                    fault_access = fault.access() == PageFault::Access::Read ? "Read" : "Write";
+                current_process.set_coredump_metadata("fault_access", fault_access);
+            }
         }
 
         handle_crash(regs, "Page Fault", SIGSEGV, response == PageFaultResponse::OutOfMemory);
     } else if (response == PageFaultResponse::Continue) {
-#if PAGE_FAULT_DEBUG
-        dbgln("Continuing after resolved page fault");
-#endif
+        dbgln_if(PAGE_FAULT_DEBUG, "Continuing after resolved page fault");
     } else {
         VERIFY_NOT_REACHED();
     }
@@ -362,14 +347,15 @@ void debug_handler(TrapFrame* trap)
         PANIC("Debug exception in ring 0");
     }
     constexpr u8 REASON_SINGLESTEP = 14;
-    bool is_reason_singlestep = (read_dr6() & (1 << REASON_SINGLESTEP));
-    if (!is_reason_singlestep)
+    auto debug_status = read_dr6();
+    auto should_trap_mask = (1 << REASON_SINGLESTEP) | 0b1111;
+    if ((debug_status & should_trap_mask) == 0)
         return;
-
     if (auto tracer = process.tracer()) {
         tracer->set_regs(regs);
     }
     current_thread->send_urgent_signal_to_self(SIGTRAP);
+    write_dr6(debug_status & ~(should_trap_mask));
 }
 
 EH_ENTRY_NO_CODE(3, breakpoint);
@@ -498,8 +484,8 @@ void unregister_generic_interrupt_handler(u8 interrupt_number, GenericInterruptH
 UNMAP_AFTER_INIT void register_interrupt_handler(u8 index, void (*handler)())
 {
     // FIXME: Why is that with selector 8?
-    // FIXME: Is the Gate Type really required to be an Interupt
-    // FIXME: Whats up with that storage segment 0?
+    // FIXME: Is the Gate Type really required to be an Interrupt
+    // FIXME: What's up with that storage segment 0?
     s_idt[index] = IDTEntry((FlatPtr)handler, 8, IDTEntryType::InterruptGate32, 0, 0);
 }
 
@@ -507,7 +493,7 @@ UNMAP_AFTER_INIT void register_user_callable_interrupt_handler(u8 index, void (*
 {
     // FIXME: Why is that with selector 8?
     // FIXME: Is the Gate Type really required to be a Trap
-    // FIXME: Whats up with that storage segment 0?
+    // FIXME: What's up with that storage segment 0?
     s_idt[index] = IDTEntry((FlatPtr)handler, 8, IDTEntryType::TrapGate32, 0, 3);
 }
 
@@ -542,6 +528,7 @@ UNMAP_AFTER_INIT static void idt_init()
     for (u8 i = 0x11; i < 0x50; i++)
         register_interrupt_handler(i, unimp_trap);
 
+    dbgln("Initializing unhandled interrupt handlers");
     register_interrupt_handler(0x50, interrupt_80_asm_entry);
     register_interrupt_handler(0x51, interrupt_81_asm_entry);
     register_interrupt_handler(0x52, interrupt_82_asm_entry);
@@ -719,8 +706,6 @@ UNMAP_AFTER_INIT static void idt_init()
     register_interrupt_handler(0xfe, interrupt_254_asm_entry);
     register_interrupt_handler(0xff, interrupt_255_asm_entry);
 
-    dbgln("Installing Unhandled Handlers");
-
     for (u8 i = 0; i < GENERIC_INTERRUPT_HANDLERS_COUNT; ++i) {
         auto* handler = new UnhandledInterruptHandler(i);
         handler->register_interrupt_handler();
@@ -854,18 +839,69 @@ FlatPtr read_cr4()
     return cr4;
 }
 
-FlatPtr read_dr6()
+void read_debug_registers_into(DebugRegisterState& state)
 {
-    FlatPtr dr6;
-#if ARCH(I386)
-    asm("mov %%dr6, %%eax"
-        : "=a"(dr6));
-#else
-    asm("mov %%dr6, %%rax"
-        : "=a"(dr6));
-#endif
-    return dr6;
+    state.dr0 = read_dr0();
+    state.dr1 = read_dr1();
+    state.dr2 = read_dr2();
+    state.dr3 = read_dr3();
+    state.dr6 = read_dr6();
+    state.dr7 = read_dr7();
 }
+
+void write_debug_registers_from(const DebugRegisterState& state)
+{
+    write_dr0(state.dr0);
+    write_dr1(state.dr1);
+    write_dr2(state.dr2);
+    write_dr3(state.dr3);
+    write_dr6(state.dr6);
+    write_dr7(state.dr7);
+}
+
+void clear_debug_registers()
+{
+    write_dr0(0);
+    write_dr1(0);
+    write_dr2(0);
+    write_dr3(0);
+    write_dr7(1 << 10); // Bit 10 is reserved and must be set to 1.
+}
+
+#if ARCH(I386)
+#    define DEFINE_DEBUG_REGISTER(index)                         \
+        FlatPtr read_dr##index()                                 \
+        {                                                        \
+            FlatPtr value;                                       \
+            asm("mov %%dr" #index ", %%eax"                      \
+                : "=a"(value));                                  \
+            return value;                                        \
+        }                                                        \
+        void write_dr##index(FlatPtr value)                      \
+        {                                                        \
+            asm volatile("mov %%eax, %%dr" #index ::"a"(value)); \
+        }
+#else
+#    define DEFINE_DEBUG_REGISTER(index)                         \
+        FlatPtr read_dr##index()                                 \
+        {                                                        \
+            FlatPtr value;                                       \
+            asm("mov %%dr" #index ", %%rax"                      \
+                : "=a"(value));                                  \
+            return value;                                        \
+        }                                                        \
+        void write_dr##index(FlatPtr value)                      \
+        {                                                        \
+            asm volatile("mov %%rax, %%dr" #index ::"a"(value)); \
+        }
+#endif
+
+DEFINE_DEBUG_REGISTER(0);
+DEFINE_DEBUG_REGISTER(1);
+DEFINE_DEBUG_REGISTER(2);
+DEFINE_DEBUG_REGISTER(3);
+DEFINE_DEBUG_REGISTER(6);
+DEFINE_DEBUG_REGISTER(7);
 
 #define XCR_XFEATURE_ENABLED_MASK 0
 
@@ -887,15 +923,13 @@ UNMAP_AFTER_INIT void write_xcr0(u64 value)
 
 READONLY_AFTER_INIT FPUState Processor::s_clean_fpu_state;
 
-READONLY_AFTER_INIT static Vector<Processor*>* s_processors;
-static SpinLock s_processor_lock;
+READONLY_AFTER_INIT static ProcessorContainer s_processors {};
 READONLY_AFTER_INIT volatile u32 Processor::g_total_processors;
 static volatile bool s_smp_enabled;
 
-Vector<Processor*>& Processor::processors()
+ProcessorContainer& Processor::processors()
 {
-    VERIFY(s_processors);
-    return *s_processors;
+    return s_processors;
 }
 
 Processor& Processor::by_id(u32 cpu)
@@ -1202,13 +1236,9 @@ UNMAP_AFTER_INIT void Processor::initialize(u32 cpu)
     m_info = new ProcessorInfo(*this);
 
     {
-        ScopedSpinLock lock(s_processor_lock);
         // We need to prevent races between APs starting up at the same time
-        if (!s_processors)
-            s_processors = new Vector<Processor*>();
-        if (cpu >= s_processors->size())
-            s_processors->resize(cpu + 1);
-        (*s_processors)[cpu] = this;
+        VERIFY(cpu < s_processors.size());
+        s_processors[cpu] = this;
     }
 }
 
@@ -1390,6 +1420,15 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
     set_fs(to_tss.fs);
     set_gs(to_tss.gs);
 
+    if (from_thread->process().is_traced())
+        read_debug_registers_into(from_thread->debug_register_state());
+
+    if (to_thread->process().is_traced()) {
+        write_debug_registers_from(to_thread->debug_register_state());
+    } else {
+        clear_debug_registers();
+    }
+
     auto& processor = Processor::current();
     auto& tls_descriptor = processor.get_gdt_entry(GDT_SELECTOR_TLS);
     tls_descriptor.set_base(to_thread->thread_specific_data());
@@ -1403,7 +1442,6 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
 
     asm volatile("fxrstor %0" ::"m"(to_thread->fpu_state()));
 
-    // TODO: debug registers
     // TODO: ioperm?
 }
 
@@ -1941,9 +1979,8 @@ UNMAP_AFTER_INIT void Processor::smp_enable()
 void Processor::smp_cleanup_message(ProcessorMessage& msg)
 {
     switch (msg.type) {
-    case ProcessorMessage::CallbackWithData:
-        if (msg.callback_with_data.free)
-            msg.callback_with_data.free(msg.callback_with_data.data);
+    case ProcessorMessage::Callback:
+        msg.callback_value().~Function();
         break;
     default:
         break;
@@ -1982,10 +2019,7 @@ bool Processor::smp_process_pending_messages()
 
             switch (msg->type) {
             case ProcessorMessage::Callback:
-                msg->callback.handler();
-                break;
-            case ProcessorMessage::CallbackWithData:
-                msg->callback_with_data.handler(msg->callback_with_data.data);
+                msg->invoke_callback();
                 break;
             case ProcessorMessage::FlushTlb:
                 if (is_user_address(VirtualAddress(msg->flush_tlb.ptr))) {
@@ -2049,12 +2083,11 @@ void Processor::smp_broadcast_message(ProcessorMessage& msg)
     VERIFY(msg.refs > 0);
     bool need_broadcast = false;
     for_each(
-        [&](Processor& proc) -> IterationDecision {
+        [&](Processor& proc) {
             if (&proc != &cur_proc) {
                 if (proc.smp_queue_message(msg))
                     need_broadcast = true;
             }
-            return IterationDecision::Continue;
         });
 
     // Now trigger an IPI on all other APs (unless all targets already had messages queued)
@@ -2081,25 +2114,12 @@ void Processor::smp_broadcast_wait_sync(ProcessorMessage& msg)
     smp_return_to_pool(msg);
 }
 
-void Processor::smp_broadcast(void (*callback)(void*), void* data, void (*free_data)(void*), bool async)
+void Processor::smp_broadcast(Function<void()> callback, bool async)
 {
     auto& msg = smp_get_from_pool();
     msg.async = async;
-    msg.type = ProcessorMessage::CallbackWithData;
-    msg.callback_with_data.handler = callback;
-    msg.callback_with_data.data = data;
-    msg.callback_with_data.free = free_data;
-    smp_broadcast_message(msg);
-    if (!async)
-        smp_broadcast_wait_sync(msg);
-}
-
-void Processor::smp_broadcast(void (*callback)(), bool async)
-{
-    auto& msg = smp_get_from_pool();
-    msg.async = async;
-    msg.type = ProcessorMessage::CallbackWithData;
-    msg.callback.handler = callback;
+    msg.type = ProcessorMessage::Callback;
+    new (msg.callback_storage) ProcessorMessage::CallbackFunction(move(callback));
     smp_broadcast_message(msg);
     if (!async)
         smp_broadcast_wait_sync(msg);
@@ -2136,21 +2156,11 @@ void Processor::smp_unicast_message(u32 cpu, ProcessorMessage& msg, bool async)
     }
 }
 
-void Processor::smp_unicast(u32 cpu, void (*callback)(void*), void* data, void (*free_data)(void*), bool async)
+void Processor::smp_unicast(u32 cpu, Function<void()> callback, bool async)
 {
     auto& msg = smp_get_from_pool();
-    msg.type = ProcessorMessage::CallbackWithData;
-    msg.callback_with_data.handler = callback;
-    msg.callback_with_data.data = data;
-    msg.callback_with_data.free = free_data;
-    smp_unicast_message(cpu, msg, async);
-}
-
-void Processor::smp_unicast(u32 cpu, void (*callback)(), bool async)
-{
-    auto& msg = smp_get_from_pool();
-    msg.type = ProcessorMessage::CallbackWithData;
-    msg.callback.handler = callback;
+    msg.type = ProcessorMessage::Callback;
+    new (msg.callback_storage) ProcessorMessage::CallbackFunction(move(callback));
     smp_unicast_message(cpu, msg, async);
 }
 
@@ -2174,9 +2184,8 @@ void Processor::smp_broadcast_halt()
     // We don't want to use a message, because this could have been triggered
     // by being out of memory and we might not be able to get a message
     for_each(
-        [&](Processor& proc) -> IterationDecision {
+        [&](Processor& proc) {
             proc.m_halt_requested.store(true, AK::MemoryOrder::memory_order_release);
-            return IterationDecision::Continue;
         });
 
     // Now trigger an IPI on all other APs
@@ -2197,6 +2206,7 @@ UNMAP_AFTER_INIT void Processor::deferred_call_pool_init()
     for (size_t i = 0; i < pool_count; i++) {
         auto& entry = m_deferred_call_pool[i];
         entry.next = i < pool_count - 1 ? &m_deferred_call_pool[i + 1] : nullptr;
+        new (entry.handler_storage) DeferredCallEntry::HandlerFunction;
         entry.was_allocated = false;
     }
     m_pending_deferred_calls = nullptr;
@@ -2207,6 +2217,8 @@ void Processor::deferred_call_return_to_pool(DeferredCallEntry* entry)
 {
     VERIFY(m_in_critical);
     VERIFY(!entry->was_allocated);
+
+    entry->handler_value() = {};
 
     entry->next = m_free_deferred_call_pool_entry;
     m_free_deferred_call_pool_entry = entry;
@@ -2225,6 +2237,7 @@ DeferredCallEntry* Processor::deferred_call_get_free()
     }
 
     auto* entry = new DeferredCallEntry;
+    new (entry->handler_storage) DeferredCallEntry::HandlerFunction;
     entry->was_allocated = true;
     return entry;
 }
@@ -2253,20 +2266,14 @@ void Processor::deferred_call_execute_pending()
     pending_list = reverse_list(pending_list);
 
     do {
-        // Call the appropriate callback handler
-        if (pending_list->have_data) {
-            pending_list->callback_with_data.handler(pending_list->callback_with_data.data);
-            if (pending_list->callback_with_data.free)
-                pending_list->callback_with_data.free(pending_list->callback_with_data.data);
-        } else {
-            pending_list->callback.handler();
-        }
+        pending_list->invoke_handler();
 
         // Return the entry back to the pool, or free it
         auto* next = pending_list->next;
-        if (pending_list->was_allocated)
+        if (pending_list->was_allocated) {
+            pending_list->handler_value().~Function();
             delete pending_list;
-        else
+        } else
             deferred_call_return_to_pool(pending_list);
         pending_list = next;
     } while (pending_list);
@@ -2279,7 +2286,7 @@ void Processor::deferred_call_queue_entry(DeferredCallEntry* entry)
     m_pending_deferred_calls = entry;
 }
 
-void Processor::deferred_call_queue(void (*callback)())
+void Processor::deferred_call_queue(Function<void()> callback)
 {
     // NOTE: If we are called outside of a critical section and outside
     // of an irq handler, the function will be executed before we return!
@@ -2287,24 +2294,7 @@ void Processor::deferred_call_queue(void (*callback)())
     auto& cur_proc = Processor::current();
 
     auto* entry = cur_proc.deferred_call_get_free();
-    entry->have_data = false;
-    entry->callback.handler = callback;
-
-    cur_proc.deferred_call_queue_entry(entry);
-}
-
-void Processor::deferred_call_queue(void (*callback)(void*), void* data, void (*free_data)(void*))
-{
-    // NOTE: If we are called outside of a critical section and outside
-    // of an irq handler, the function will be executed before we return!
-    ScopedCritical critical;
-    auto& cur_proc = Processor::current();
-
-    auto* entry = cur_proc.deferred_call_get_free();
-    entry->have_data = true;
-    entry->callback_with_data.handler = callback;
-    entry->callback_with_data.data = data;
-    entry->callback_with_data.free = free_data;
+    entry->handler_value() = move(callback);
 
     cur_proc.deferred_call_queue_entry(entry);
 }
@@ -2416,9 +2406,16 @@ void copy_ptrace_registers_into_kernel_registers(RegisterState& kernel_regs, con
 void __assertion_failed(const char* msg, const char* file, unsigned line, const char* func)
 {
     asm volatile("cli");
-    dmesgln("ASSERTION FAILED: {}", msg);
-    dmesgln("{}:{} in {}", file, line, func);
+    critical_dmesgln("ASSERTION FAILED: {}", msg);
+    critical_dmesgln("{}:{} in {}", file, line, func);
 
+    abort();
+}
+#endif
+
+[[noreturn]] void abort()
+{
+#ifdef DEBUG
     // Switch back to the current process's page tables if there are any.
     // Otherwise stack walking will be a disaster.
     auto process = Process::current();
@@ -2427,8 +2424,16 @@ void __assertion_failed(const char* msg, const char* file, unsigned line, const 
 
     Kernel::dump_backtrace();
     Processor::halt();
-}
 #endif
+
+    abort();
+}
+
+[[noreturn]] void _abort()
+{
+    asm volatile("ud2");
+    __builtin_unreachable();
+}
 
 NonMaskableInterruptDisabler::NonMaskableInterruptDisabler()
 {

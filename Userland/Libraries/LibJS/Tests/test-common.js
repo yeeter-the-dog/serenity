@@ -20,8 +20,8 @@ console.log = (...args) => {
 };
 
 class ExpectationError extends Error {
-    constructor(message, fileName, lineNumber) {
-        super(message, fileName, lineNumber);
+    constructor(message) {
+        super(message);
         this.name = "ExpectationError";
     }
 }
@@ -65,8 +65,7 @@ class ExpectationError extends Error {
             this.__doMatcher(() => {
                 this.__expect(
                     Object.is(this.target, value),
-                    () =>
-                        "toBe: expected _" + String(value) + "_, got _" + String(this.target) + "_"
+                    () => `toBe: expected _${String(value)}_, got _${String(this.target)}_`
                 );
             });
         }
@@ -75,11 +74,11 @@ class ExpectationError extends Error {
         toBeCloseTo(value) {
             this.__expect(
                 typeof this.target === "number",
-                () => "toBeCloseTo: target not of type number"
+                () => `toBeCloseTo: expected target of type number, got ${typeof value}`
             );
             this.__expect(
                 typeof value === "number",
-                () => "toBeCloseTo: argument not of type number"
+                () => `toBeCloseTo: expected argument of type number, got ${typeof value}`
             );
 
             this.__doMatcher(() => {
@@ -133,7 +132,10 @@ class ExpectationError extends Error {
 
         toBeDefined() {
             this.__doMatcher(() => {
-                this.__expect(this.target !== undefined, () => "toBeDefined: target was undefined");
+                this.__expect(
+                    this.target !== undefined,
+                    () => "toBeDefined: expected target to be defined, got undefined"
+                );
             });
         }
 
@@ -153,7 +155,10 @@ class ExpectationError extends Error {
             this.__doMatcher(() => {
                 this.__expect(
                     this.target === undefined,
-                    () => "toBeUndefined: target was not undefined"
+                    () =>
+                        `toBeUndefined: expected target to be undefined, got _${String(
+                            this.target
+                        )}_`
                 );
             });
         }
@@ -162,20 +167,26 @@ class ExpectationError extends Error {
             this.__doMatcher(() => {
                 this.__expect(
                     isNaN(this.target),
-                    () => "toBeNaN: target was _" + String(this.target) + "_, not NaN"
+                    () => `toBeNaN: expected target to be NaN, got _${String(this.target)}_`
                 );
             });
         }
 
         toBeTrue() {
             this.__doMatcher(() => {
-                this.__expect(this.target === true);
+                this.__expect(
+                    this.target === true,
+                    () => `toBeTrue: expected target to be true, got _${String(this.target)}_`
+                );
             });
         }
 
         toBeFalse() {
             this.__doMatcher(() => {
-                this.__expect(this.target === false);
+                this.__expect(
+                    this.target === false,
+                    () => `toBeTrue: expected target to be false, got _${String(this.target)}_`
+                );
             });
         }
 
@@ -291,10 +302,22 @@ class ExpectationError extends Error {
             this.__doMatcher(() => {
                 try {
                     this.target();
-                    this.__expect(false);
+                    this.__expect(false, () => "toThrowWithMessage: target function did not throw");
                 } catch (e) {
-                    this.__expect(e instanceof class_);
-                    this.__expect(e.message.includes(message));
+                    this.__expect(
+                        e instanceof class_,
+                        () =>
+                            `toThrowWithMessage: expected error to be instance of ${
+                                class_.name
+                            }, got ${String(e.name)}`
+                    );
+                    this.__expect(
+                        e.message.includes(message),
+                        () =>
+                            `toThrowWithMessage: expected error message to include _${String(
+                                message
+                            )}_, got _${String(e.message)}_`
+                    );
                 }
             });
         }
@@ -418,7 +441,15 @@ class ExpectationError extends Error {
 
     describe = (message, callback) => {
         suiteMessage = message;
-        callback();
+        if (!__TestResults__[suiteMessage]) __TestResults__[suiteMessage] = {};
+        try {
+            callback();
+        } catch (e) {
+            __TestResults__[suiteMessage][defaultSuiteMessage] = {
+                result: "fail",
+                details: String(e),
+            };
+        }
         suiteMessage = defaultSuiteMessage;
     };
 
@@ -426,7 +457,7 @@ class ExpectationError extends Error {
         if (!__TestResults__[suiteMessage]) __TestResults__[suiteMessage] = {};
 
         const suite = __TestResults__[suiteMessage];
-        if (suite[message]) {
+        if (Object.prototype.hasOwnProperty.call(suite, message)) {
             suite[message] = {
                 result: "fail",
                 details: "Another test with the same message did already run",
@@ -454,7 +485,13 @@ class ExpectationError extends Error {
         if (!__TestResults__[suiteMessage]) __TestResults__[suiteMessage] = {};
 
         const suite = __TestResults__[suiteMessage];
-        if (suite[message]) throw new Error("Duplicate test name: " + message);
+        if (Object.prototype.hasOwnProperty.call(suite, message)) {
+            suite[message] = {
+                result: "fail",
+                details: "Another test with the same message did already run",
+            };
+            return;
+        }
 
         suite[message] = {
             result: "skip",

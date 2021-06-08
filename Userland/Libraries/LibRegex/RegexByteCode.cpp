@@ -1,35 +1,14 @@
 /*
  * Copyright (c) 2020, Emanuel Sprung <emanuel.sprung@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "RegexByteCode.h"
 #include "AK/StringBuilder.h"
 #include "RegexDebug.h"
+#include <AK/CharacterTypes.h>
 #include <AK/Debug.h>
-
-#include <ctype.h>
 
 namespace regex {
 
@@ -230,7 +209,6 @@ ALWAYS_INLINE ExecutionResult OpCode_FailForks::execute(const MatchInput& input,
 
 ALWAYS_INLINE ExecutionResult OpCode_Jump::execute(const MatchInput&, MatchState& state, MatchOutput&) const
 {
-
     state.instruction_position += offset();
     return ExecutionResult::Continue;
 }
@@ -262,7 +240,7 @@ ALWAYS_INLINE ExecutionResult OpCode_CheckBegin::execute(const MatchInput& input
 
 ALWAYS_INLINE ExecutionResult OpCode_CheckBoundary::execute(const MatchInput& input, MatchState& state, MatchOutput&) const
 {
-    auto isword = [](auto ch) { return isalnum(ch) || ch == '_'; };
+    auto isword = [](auto ch) { return is_ascii_alphanumeric(ch) || ch == '_'; };
     auto is_word_boundary = [&] {
         if (state.string_position == input.view.length()) {
             if (state.string_position > 0 && isword(input.view[state.string_position - 1]))
@@ -383,7 +361,7 @@ ALWAYS_INLINE ExecutionResult OpCode_SaveRightNamedCaptureGroup::execute(const M
             map.set(capture_group_name, { view, input.line, start_position, input.global_offset + start_position }); // take view to original string
         }
     } else {
-        fprintf(stderr, "Didn't find corresponding capture group match for name=%s, match_index=%lu\n", capture_group_name.to_string().characters(), input.match_index);
+        warnln("Didn't find corresponding capture group match for name={}, match_index={}", capture_group_name.to_string(), input.match_index);
     }
 
     return ExecutionResult::Continue;
@@ -511,7 +489,7 @@ ALWAYS_INLINE ExecutionResult OpCode_Compare::execute(const MatchInput& input, M
                 return ExecutionResult::Failed_ExecuteLowPrioForks;
 
         } else {
-            fprintf(stderr, "Undefined comparison: %i\n", (int)compare_type);
+            warnln("Undefined comparison: {}", (int)compare_type);
             VERIFY_NOT_REACHED();
             break;
         }
@@ -531,8 +509,8 @@ ALWAYS_INLINE void OpCode_Compare::compare_char(const MatchInput& input, MatchSt
     u32 ch2 = input.view[state.string_position];
 
     if (input.regex_options & AllFlags::Insensitive) {
-        ch1 = tolower(ch1);
-        ch2 = tolower(ch2);
+        ch1 = to_ascii_lowercase(ch1);
+        ch2 = to_ascii_uppercase(ch2);
     }
 
     if (ch1 == ch2) {
@@ -572,7 +550,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
 {
     switch (character_class) {
     case CharClass::Alnum:
-        if (isalnum(ch)) {
+        if (is_ascii_alphanumeric(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -580,11 +558,11 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Alpha:
-        if (isalpha(ch))
+        if (is_ascii_alpha(ch))
             ++state.string_position;
         break;
     case CharClass::Blank:
-        if (ch == ' ' || ch == '\t') {
+        if (is_ascii_blank(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -592,7 +570,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Cntrl:
-        if (iscntrl(ch)) {
+        if (is_ascii_control(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -600,7 +578,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Digit:
-        if (isdigit(ch)) {
+        if (is_ascii_digit(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -608,7 +586,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Graph:
-        if (isgraph(ch)) {
+        if (is_ascii_graphical(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -616,7 +594,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Lower:
-        if (islower(ch) || ((input.regex_options & AllFlags::Insensitive) && isupper(ch))) {
+        if (is_ascii_lower_alpha(ch) || ((input.regex_options & AllFlags::Insensitive) && is_ascii_upper_alpha(ch))) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -624,7 +602,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Print:
-        if (isprint(ch)) {
+        if (is_ascii_printable(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -632,7 +610,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Punct:
-        if (ispunct(ch)) {
+        if (is_ascii_punctuation(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -640,7 +618,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Space:
-        if (isspace(ch)) {
+        if (is_ascii_space(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -648,7 +626,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Upper:
-        if (isupper(ch) || ((input.regex_options & AllFlags::Insensitive) && islower(ch))) {
+        if (is_ascii_upper_alpha(ch) || ((input.regex_options & AllFlags::Insensitive) && is_ascii_lower_alpha(ch))) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -656,7 +634,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Word:
-        if (isalnum(ch) || ch == '_') {
+        if (is_ascii_alphanumeric(ch) || ch == '_') {
             if (inverse)
                 inverse_matched = true;
             else
@@ -664,7 +642,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
         }
         break;
     case CharClass::Xdigit:
-        if (isxdigit(ch)) {
+        if (is_ascii_hex_digit(ch)) {
             if (inverse)
                 inverse_matched = true;
             else
@@ -677,9 +655,9 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_class(const MatchInput& inp
 ALWAYS_INLINE void OpCode_Compare::compare_character_range(const MatchInput& input, MatchState& state, u32 from, u32 to, u32 ch, bool inverse, bool& inverse_matched)
 {
     if (input.regex_options & AllFlags::Insensitive) {
-        from = tolower(from);
-        to = tolower(to);
-        ch = tolower(ch);
+        from = to_ascii_lowercase(from);
+        to = to_ascii_lowercase(to);
+        ch = to_ascii_lowercase(ch);
     }
 
     if (ch >= from && ch <= to) {
@@ -692,7 +670,7 @@ ALWAYS_INLINE void OpCode_Compare::compare_character_range(const MatchInput& inp
 
 const String OpCode_Compare::arguments_string() const
 {
-    return String::format("argc=%lu, args=%lu ", arguments_count(), arguments_size());
+    return String::formatted("argc={}, args={} ", arguments_count(), arguments_size());
 }
 
 const Vector<String> OpCode_Compare::variable_arguments_to_string(Optional<MatchInput> input) const
@@ -710,7 +688,7 @@ const Vector<String> OpCode_Compare::variable_arguments_to_string(Optional<Match
 
         if (compare_type == CharacterCompareType::Char) {
             auto ch = m_bytecode->at(offset++);
-            auto is_ascii = isascii(ch) && isprint(ch);
+            auto is_ascii = is_ascii_printable(ch);
             if (is_ascii)
                 result.empend(String::formatted("value='{:c}'", static_cast<char>(ch)));
             else

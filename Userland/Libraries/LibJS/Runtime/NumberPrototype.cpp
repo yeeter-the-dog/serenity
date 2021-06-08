@@ -1,27 +1,8 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -52,34 +33,41 @@ void NumberPrototype::initialize(GlobalObject& object)
 {
     auto& vm = this->vm();
     Object::initialize(object);
-    define_native_function(vm.names.toString, to_string, 1, Attribute::Configurable | Attribute::Writable);
+    u8 attr = Attribute::Configurable | Attribute::Writable;
+    define_native_function(vm.names.toString, to_string, 1, attr);
+    define_native_function(vm.names.valueOf, value_of, 0, attr);
 }
 
 NumberPrototype::~NumberPrototype()
 {
 }
 
+// thisNumberValue, https://tc39.es/ecma262/#thisnumbervalue
+static Value this_number_value(GlobalObject& global_object, Value value)
+{
+    if (value.is_number())
+        return value;
+    if (value.is_object() && is<NumberObject>(value.as_object()))
+        return static_cast<NumberObject&>(value.as_object()).value_of();
+    auto& vm = global_object.vm();
+    vm.throw_exception<TypeError>(global_object, ErrorType::NotA, "Number");
+    return {};
+}
+
 JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
 {
-    Value number_value;
-
-    auto this_value = vm.this_value(global_object);
-    if (this_value.is_number()) {
-        number_value = this_value;
-    } else if (this_value.is_object() && is<NumberObject>(this_value.as_object())) {
-        number_value = static_cast<NumberObject&>(this_value.as_object()).value_of();
-    } else {
-        vm.throw_exception<TypeError>(global_object, ErrorType::NumberIncompatibleThis, "toString");
+    auto number_value = this_number_value(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    }
 
-    int radix;
+    double radix_argument = 10;
     auto argument = vm.argument(0);
-    if (argument.is_undefined()) {
-        radix = 10;
-    } else {
-        radix = argument.to_i32(global_object);
+    if (!vm.argument(0).is_undefined()) {
+        radix_argument = argument.to_integer_or_infinity(global_object);
+        if (vm.exception())
+            return {};
     }
+    int radix = (int)radix_argument;
 
     if (vm.exception() || radix < 2 || radix > 36) {
         vm.throw_exception<RangeError>(global_object, ErrorType::InvalidRadix);
@@ -100,7 +88,7 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
     if (negative)
         number *= -1;
 
-    int int_part = floor(number);
+    u64 int_part = floor(number);
     double decimal_part = number - int_part;
 
     Vector<char> backwards_characters;
@@ -127,11 +115,11 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
     if (decimal_part != 0.0) {
         characters.append('.');
 
-        int precision = max_precision_for_radix[radix];
+        u8 precision = max_precision_for_radix[radix];
 
-        for (int i = 0; i < precision; ++i) {
+        for (u8 i = 0; i < precision; ++i) {
             decimal_part *= radix;
-            int integral = floor(decimal_part);
+            u64 integral = floor(decimal_part);
             characters.append(digits[integral]);
             decimal_part -= integral;
         }
@@ -141,6 +129,11 @@ JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::to_string)
     }
 
     return js_string(vm, String(characters.data(), characters.size()));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(NumberPrototype::value_of)
+{
+    return this_number_value(global_object, vm.this_value(global_object));
 }
 
 }

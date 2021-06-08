@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/Debug.h>
@@ -55,6 +35,7 @@ bool Access::is_initialized()
 }
 
 UNMAP_AFTER_INIT Access::Access()
+    : m_enumerated_buses(256, false)
 {
     s_access = this;
 }
@@ -105,10 +86,11 @@ void Access::enumerate_functions(int type, u8 bus, u8 device, u8 function, Funct
     Address address(0, bus, device, function);
     if (type == -1 || type == early_read_type(address))
         callback(address, { early_read16_field(address, PCI_VENDOR_ID), early_read16_field(address, PCI_DEVICE_ID) });
-    if (early_read_type(address) == PCI_TYPE_BRIDGE && recursive) {
+    if (early_read_type(address) == PCI_TYPE_BRIDGE && recursive && (!m_enumerated_buses.get(early_read8_field(address, PCI_SECONDARY_BUS)))) {
         u8 secondary_bus = early_read8_field(address, PCI_SECONDARY_BUS);
         dbgln_if(PCI_DEBUG, "PCI: Found secondary bus: {}", secondary_bus);
         VERIFY(secondary_bus != bus);
+        m_enumerated_buses.set(secondary_bus, true);
         enumerate_bus(type, secondary_bus, callback, recursive);
     }
 }
@@ -178,8 +160,8 @@ Vector<Capability> get_capabilities(Address address)
         dbgln_if(PCI_DEBUG, "PCI: Reading in capability at {:#02x} for {}", capability_pointer, address);
         u16 capability_header = PCI::read16(address, capability_pointer);
         u8 capability_id = capability_header & 0xff;
+        capabilities.append({ address, capability_id, capability_pointer });
         capability_pointer = capability_header >> 8;
-        capabilities.append({ capability_id, capability_pointer });
     }
     return capabilities;
 }
@@ -205,6 +187,28 @@ void raw_access(Address address, u32 field, size_t access_size, u32 value)
 ID get_id(Address address)
 {
     return { read16(address, PCI_VENDOR_ID), read16(address, PCI_DEVICE_ID) };
+}
+
+void enable_io_space(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) | (1 << 0));
+}
+void disable_io_space(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) & ~(1 << 0));
+}
+
+void enable_memory_space(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) | (1 << 1));
+}
+void disable_memory_space(Address address)
+{
+    write16(address, PCI_COMMAND, read16(address, PCI_COMMAND) & ~(1 << 1));
+}
+bool is_io_space_enabled(Address address)
+{
+    return (read16(address, PCI_COMMAND) & 1) != 0;
 }
 
 void enable_interrupt_line(Address address)
@@ -250,6 +254,27 @@ u32 get_BAR4(Address address)
 u32 get_BAR5(Address address)
 {
     return read32(address, PCI_BAR5);
+}
+
+u32 get_BAR(Address address, u8 bar)
+{
+    VERIFY(bar <= 5);
+    switch (bar) {
+    case 0:
+        return get_BAR0(address);
+    case 1:
+        return get_BAR1(address);
+    case 2:
+        return get_BAR2(address);
+    case 3:
+        return get_BAR3(address);
+    case 4:
+        return get_BAR4(address);
+    case 5:
+        return get_BAR5(address);
+    default:
+        VERIFY_NOT_REACHED();
+    }
 }
 
 u8 get_revision_id(Address address)
@@ -310,6 +335,36 @@ size_t get_BAR_space_size(Address address, u8 bar_number)
     space_size &= 0xfffffff0;
     space_size = (~space_size) + 1;
     return space_size;
+}
+
+u8 Capability::read8(u32 field) const
+{
+    return PCI::read8(m_address, m_ptr + field);
+}
+
+u16 Capability::read16(u32 field) const
+{
+    return PCI::read16(m_address, m_ptr + field);
+}
+
+u32 Capability::read32(u32 field) const
+{
+    return PCI::read32(m_address, m_ptr + field);
+}
+
+void Capability::write8(u32 field, u8 value)
+{
+    PCI::write8(m_address, m_ptr + field, value);
+}
+
+void Capability::write16(u32 field, u16 value)
+{
+    PCI::write16(m_address, m_ptr + field, value);
+}
+
+void Capability::write32(u32 field, u32 value)
+{
+    PCI::write32(m_address, m_ptr + field, value);
 }
 
 }

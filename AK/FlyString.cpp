@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/FlyString.h>
@@ -75,14 +55,22 @@ FlyString::FlyString(const String& string)
     }
 }
 
-FlyString::FlyString(const StringView& string)
-    : FlyString(static_cast<String>(string))
+FlyString::FlyString(StringView const& string)
 {
-}
-
-FlyString::FlyString(const char* string)
-    : FlyString(static_cast<String>(string))
-{
+    if (string.is_null())
+        return;
+    auto it = fly_impls().find(string.hash(), [&](auto& candidate) {
+        return string == candidate;
+    });
+    if (it == fly_impls().end()) {
+        auto new_string = string.to_string();
+        fly_impls().set(new_string.impl());
+        new_string.impl()->set_fly({}, true);
+        m_impl = new_string.impl();
+    } else {
+        VERIFY((*it)->is_fly());
+        m_impl = *it;
+    }
 }
 
 template<typename T>
@@ -125,11 +113,6 @@ bool FlyString::ends_with(const StringView& str, CaseSensitivity case_sensitivit
 FlyString FlyString::to_lowercase() const
 {
     return String(*m_impl).to_lowercase();
-}
-
-StringView FlyString::view() const
-{
-    return { characters(), length() };
 }
 
 bool FlyString::operator==(const String& other) const

@@ -1,30 +1,13 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
+#include <AK/Hex.h>
+#include <AK/Platform.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Utf8View.h>
 #include <LibJS/Console.h>
@@ -74,7 +57,6 @@
 #include <LibJS/Runtime/TypedArrayConstructor.h>
 #include <LibJS/Runtime/TypedArrayPrototype.h>
 #include <LibJS/Runtime/Value.h>
-#include <ctype.h>
 
 namespace JS {
 
@@ -124,8 +106,14 @@ void GlobalObject::initialize_global_object()
     define_native_function(vm.names.isNaN, is_nan, 1, attr);
     define_native_function(vm.names.isFinite, is_finite, 1, attr);
     define_native_function(vm.names.parseFloat, parse_float, 1, attr);
-    define_native_function(vm.names.parseInt, parse_int, 1, attr);
+    define_native_function(vm.names.parseInt, parse_int, 2, attr);
     define_native_function(vm.names.eval, eval, 1, attr);
+    define_native_function(vm.names.encodeURI, encode_uri, 1, attr);
+    define_native_function(vm.names.decodeURI, decode_uri, 1, attr);
+    define_native_function(vm.names.encodeURIComponent, encode_uri_component, 1, attr);
+    define_native_function(vm.names.decodeURIComponent, decode_uri_component, 1, attr);
+    define_native_function(vm.names.escape, escape, 1, attr);
+    define_native_function(vm.names.unescape, unescape, 1, attr);
 
     define_property(vm.names.NaN, js_nan(), 0);
     define_property(vm.names.Infinity, js_infinity(), 0);
@@ -214,12 +202,13 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_float)
 {
     if (vm.argument(0).is_number())
         return vm.argument(0);
-    auto string = vm.argument(0).to_string(global_object);
+    auto input_string = vm.argument(0).to_string(global_object);
     if (vm.exception())
         return {};
-    for (size_t length = string.length(); length > 0; --length) {
+    auto trimmed_string = input_string.trim_whitespace(TrimMode::Left);
+    for (size_t length = trimmed_string.length(); length > 0; --length) {
         // This can't throw, so no exception check is fine.
-        auto number = Value(js_string(vm, string.substring(0, length))).to_number(global_object);
+        auto number = Value(js_string(vm, trimmed_string.substring(0, length))).to_number(global_object);
         if (!number.is_nan())
             return number;
     }
@@ -262,25 +251,19 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_int)
         }
     }
 
-    auto parse_digit = [&](u32 codepoint, i32 radix) -> Optional<i32> {
-        i32 digit = -1;
-
-        if (isdigit(codepoint))
-            digit = codepoint - '0';
-        else if (islower(codepoint))
-            digit = 10 + (codepoint - 'a');
-        else if (isupper(codepoint))
-            digit = 10 + (codepoint - 'A');
-
-        if (digit == -1 || digit >= radix)
+    auto parse_digit = [&](u32 code_point, i32 radix) -> Optional<i32> {
+        if (!is_ascii_alphanumeric(code_point) || radix <= 0)
+            return {};
+        auto digit = parse_ascii_base36_digit(code_point);
+        if (digit >= (u32)radix)
             return {};
         return digit;
     };
 
     bool had_digits = false;
     double number = 0;
-    for (auto codepoint : Utf8View(s)) {
-        auto digit = parse_digit(codepoint, radix);
+    for (auto code_point : Utf8View(s)) {
+        auto digit = parse_digit(code_point, radix);
         if (!digit.has_value())
             break;
         had_digits = true;
@@ -305,6 +288,11 @@ Optional<Variable> GlobalObject::get_from_scope(const FlyString& name) const
 void GlobalObject::put_to_scope(const FlyString& name, Variable variable)
 {
     put(name, variable.value);
+}
+
+bool GlobalObject::delete_from_scope(FlyString const& name)
+{
+    return delete_property(name);
 }
 
 bool GlobalObject::has_this_binding() const
@@ -334,10 +322,163 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::eval)
     auto& caller_frame = vm.call_stack().at(vm.call_stack().size() - 2);
     TemporaryChange scope_change(vm.call_frame().scope, caller_frame->scope);
 
-    vm.interpreter().execute_statement(global_object, program);
+    auto& interpreter = vm.interpreter();
+    return interpreter.execute_statement(global_object, program).value_or(js_undefined());
+}
+
+// 19.2.6.1.1 Encode ( string, unescapedSet )
+static String encode([[maybe_unused]] JS::GlobalObject& global_object, const String& string, StringView unescaped_set)
+{
+    StringBuilder encoded_builder;
+    for (unsigned char code_unit : string) {
+        if (unescaped_set.contains(code_unit)) {
+            encoded_builder.append(code_unit);
+            continue;
+        }
+        // FIXME: check for unpaired surrogates and throw URIError
+        encoded_builder.appendff("%{:02X}", code_unit);
+    }
+    return encoded_builder.build();
+}
+
+// 19.2.6.1.2 Decode ( string, reservedSet )
+static String decode(JS::GlobalObject& global_object, const String& string, StringView reserved_set)
+{
+    StringBuilder decoded_builder;
+    auto expected_continuation_bytes = 0;
+    for (size_t k = 0; k < string.length(); k++) {
+        auto code_unit = string[k];
+        if (code_unit != '%') {
+            if (expected_continuation_bytes > 0) {
+                global_object.vm().throw_exception<URIError>(global_object, ErrorType::URIMalformed);
+                return {};
+            }
+            decoded_builder.append(code_unit);
+            continue;
+        }
+        if (k + 2 >= string.length()) {
+            global_object.vm().throw_exception<URIError>(global_object, ErrorType::URIMalformed);
+            return {};
+        }
+        auto first_digit = decode_hex_digit(string[k + 1]);
+        if (first_digit >= 16) {
+            global_object.vm().throw_exception<URIError>(global_object, ErrorType::URIMalformed);
+            return {};
+        }
+        auto second_digit = decode_hex_digit(string[k + 2]);
+        if (second_digit >= 16) {
+            global_object.vm().throw_exception<URIError>(global_object, ErrorType::URIMalformed);
+            return {};
+        }
+        char decoded_code_unit = (first_digit << 4) | second_digit;
+        k += 2;
+        if (expected_continuation_bytes > 0) {
+            decoded_builder.append(decoded_code_unit);
+            expected_continuation_bytes--;
+            continue;
+        }
+        if ((decoded_code_unit & 0x80) == 0) {
+            if (reserved_set.contains(decoded_code_unit))
+                decoded_builder.append(string.substring_view(k - 2, 3));
+            else
+                decoded_builder.append(decoded_code_unit);
+            continue;
+        }
+        auto leading_ones = count_trailing_zeroes_32_safe(~decoded_code_unit) - 24;
+        if (leading_ones == 1 || leading_ones > 4) {
+            global_object.vm().throw_exception<URIError>(global_object, ErrorType::URIMalformed);
+            return {};
+        }
+        decoded_builder.append(decoded_code_unit);
+        expected_continuation_bytes = leading_ones - 1;
+    }
+    return decoded_builder.build();
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri)
+{
+    auto uri_string = vm.argument(0).to_string(global_object);
     if (vm.exception())
         return {};
-    return vm.last_value();
+    auto encoded = encode(global_object, uri_string, ";/?:@&=+$,abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.!~*'()#"sv);
+    if (vm.exception())
+        return {};
+    return js_string(vm, move(encoded));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri)
+{
+    auto uri_string = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    auto decoded = decode(global_object, uri_string, ";/?:@&=+$,#"sv);
+    if (vm.exception())
+        return {};
+    return js_string(vm, move(decoded));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri_component)
+{
+    auto uri_string = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    auto encoded = encode(global_object, uri_string, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.!~*'()"sv);
+    if (vm.exception())
+        return {};
+    return js_string(vm, move(encoded));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri_component)
+{
+    auto uri_string = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    auto decoded = decode(global_object, uri_string, ""sv);
+    if (vm.exception())
+        return {};
+    return js_string(vm, move(decoded));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::escape)
+{
+    auto string = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    StringBuilder escaped;
+    for (auto code_point : Utf8View(string)) {
+        if (code_point < 256) {
+            if ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./"sv.contains(code_point))
+                escaped.append(code_point);
+            else
+                escaped.appendff("%{:02X}", code_point);
+            continue;
+        }
+        escaped.appendff("%u{:04X}", code_point); // FIXME: Handle utf-16 surrogate pairs
+    }
+    return js_string(vm, escaped.build());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(GlobalObject::unescape)
+{
+    auto string = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    ssize_t length = string.length();
+    StringBuilder unescaped(length);
+    for (auto k = 0; k < length; ++k) {
+        u32 code_point = string[k];
+        if (code_point == '%') {
+            if (k <= length - 6 && string[k + 1] == 'u' && is_ascii_hex_digit(string[k + 2]) && is_ascii_hex_digit(string[k + 3]) && is_ascii_hex_digit(string[k + 4]) && is_ascii_hex_digit(string[k + 5])) {
+                code_point = (parse_ascii_hex_digit(string[k + 2]) << 12) | (parse_ascii_hex_digit(string[k + 3]) << 8) | (parse_ascii_hex_digit(string[k + 4]) << 4) | parse_ascii_hex_digit(string[k + 5]);
+                k += 5;
+            } else if (k <= length - 3 && is_ascii_hex_digit(string[k + 1]) && is_ascii_hex_digit(string[k + 2])) {
+                code_point = (parse_ascii_hex_digit(string[k + 1]) << 4) | parse_ascii_hex_digit(string[k + 2]);
+                k += 2;
+            }
+        }
+        unescaped.append_code_point(code_point);
+    }
+    return js_string(vm, unescaped.build());
 }
 
 }

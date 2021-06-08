@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -39,8 +19,9 @@
 #include <LibGfx/Rect.h>
 #include <WindowServer/Cursor.h>
 #include <WindowServer/Event.h>
-#include <WindowServer/MenuBar.h>
 #include <WindowServer/MenuManager.h>
+#include <WindowServer/Menubar.h>
+#include <WindowServer/WMClientConnection.h>
 #include <WindowServer/Window.h>
 #include <WindowServer/WindowSwitcher.h>
 #include <WindowServer/WindowType.h>
@@ -97,6 +78,7 @@ public:
     void notify_opacity_changed(Window&);
     void notify_occlusion_state_changed(Window&);
     void notify_progress_changed(Window&);
+    void notify_modified_changed(Window&);
 
     Gfx::IntRect maximized_window_rect(const Window&) const;
 
@@ -169,15 +151,19 @@ public:
     void clear_resize_candidate();
     ResizeDirection resize_direction_of_window(const Window&);
 
-    void tell_wm_listeners_window_state_changed(Window&);
-    void tell_wm_listeners_window_icon_changed(Window&);
-    void tell_wm_listeners_window_rect_changed(Window&);
-    void tell_wm_listeners_applet_area_size_changed(const Gfx::IntSize&);
+    void greet_window_manager(WMClientConnection&);
+    void tell_wms_window_state_changed(Window&);
+    void tell_wms_window_icon_changed(Window&);
+    void tell_wms_window_rect_changed(Window&);
+    void tell_wms_applet_area_size_changed(const Gfx::IntSize&);
+    void tell_wms_super_key_pressed();
 
     bool is_active_window_or_accessory(Window&) const;
 
     void start_window_resize(Window&, const Gfx::IntPoint&, MouseButton);
     void start_window_resize(Window&, const MouseEvent&);
+    void start_window_move(Window&, const MouseEvent&);
+    void start_window_move(Window&, const Gfx::IntPoint&);
 
     const Window* active_fullscreen_window() const
     {
@@ -196,6 +182,7 @@ public:
     }
 
     bool update_theme(String theme_path, String theme_name);
+    void invalidate_after_theme_or_font_change();
 
     bool set_hovered_window(Window*);
     void deliver_mouse_event(Window& window, MouseEvent& event, bool process_double_click);
@@ -213,19 +200,19 @@ public:
     {
         auto* blocking_modal_window = window.blocking_modal_window();
         if (blocking_modal_window || window.is_modal()) {
-            Vector<Window*> modal_stack;
+            Vector<Window&> modal_stack;
             auto* modal_stack_top = blocking_modal_window ? blocking_modal_window : &window;
             for (auto* parent = modal_stack_top->parent_window(); parent; parent = parent->parent_window()) {
                 auto* blocked_by = parent->blocking_modal_window();
                 if (!blocked_by || (blocked_by != modal_stack_top && !modal_stack_top->is_descendant_of(*blocked_by)))
                     break;
-                modal_stack.append(parent);
+                modal_stack.append(*parent);
                 if (!parent->is_modal())
                     break;
             }
             if (!modal_stack.is_empty()) {
                 for (size_t i = modal_stack.size(); i > 0; i--) {
-                    IterationDecision decision = f(*modal_stack[i - 1], false);
+                    IterationDecision decision = f(modal_stack[i - 1], false);
                     if (decision != IterationDecision::Continue)
                         return decision;
                 }
@@ -253,7 +240,7 @@ private:
     bool process_ongoing_window_resize(const MouseEvent&, Window*& hovered_window);
     bool process_ongoing_window_move(MouseEvent&, Window*& hovered_window);
     bool process_ongoing_drag(MouseEvent&, Window*& hovered_window);
-    void start_window_move(Window&, const MouseEvent&);
+
     template<typename Callback>
     IterationDecision for_each_visible_window_of_type_from_back_to_front(WindowType, Callback, bool ignore_highlight = false);
     template<typename Callback>
@@ -263,17 +250,18 @@ private:
     template<typename Callback>
     IterationDecision for_each_visible_window_from_back_to_front(Callback);
     template<typename Callback>
-    void for_each_window_listening_to_wm_events(Callback);
-    template<typename Callback>
     void for_each_window(Callback);
     template<typename Callback>
     IterationDecision for_each_window_of_type_from_front_to_back(WindowType, Callback, bool ignore_highlight = false);
 
+    template<typename Callback>
+    void for_each_window_manager(Callback);
+
     virtual void event(Core::Event&) override;
     void paint_window_frame(const Window&);
-    void tell_wm_listener_about_window(Window& listener, Window&);
-    void tell_wm_listener_about_window_icon(Window& listener, Window&);
-    void tell_wm_listener_about_window_rect(Window& listener, Window&);
+    void tell_wm_about_window(WMClientConnection& conn, Window&);
+    void tell_wm_about_window_icon(WMClientConnection& conn, Window&);
+    void tell_wm_about_window_rect(WMClientConnection& conn, Window&);
     bool pick_new_active_window(Window*);
 
     void do_move_to_front(Window&, bool, bool);
@@ -296,7 +284,7 @@ private:
     RefPtr<Cursor> m_wait_cursor;
     RefPtr<Cursor> m_crosshair_cursor;
 
-    InlineLinkedList<Window> m_windows_in_order;
+    Window::List m_windows_in_order;
 
     struct DoubleClickInfo {
         struct ClickMetadata {
@@ -331,6 +319,7 @@ private:
     DoubleClickInfo m_double_click_info;
     int m_double_click_speed { 0 };
     int m_max_distance_for_double_click { 4 };
+    bool m_previous_event_was_super_keydown { false };
 
     WeakPtr<Window> m_active_window;
     WeakPtr<Window> m_hovered_window;
@@ -422,16 +411,18 @@ IterationDecision WindowManager::for_each_visible_window_of_type_from_front_to_b
             return IterationDecision::Break;
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (!window->is_visible())
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (!window.is_visible())
             continue;
-        if (window->is_minimized())
+        if (window.is_minimized())
             continue;
-        if (window->type() != type)
+        if (window.type() != type)
             continue;
-        if (!ignore_highlight && window == m_highlight_window)
+        if (!ignore_highlight && &window == m_highlight_window)
             continue;
-        if (callback(*window) == IterationDecision::Break)
+        if (callback(window) == IterationDecision::Break)
             return IterationDecision::Break;
     }
     return IterationDecision::Continue;
@@ -460,12 +451,13 @@ IterationDecision WindowManager::for_each_visible_window_from_front_to_back(Call
 }
 
 template<typename Callback>
-void WindowManager::for_each_window_listening_to_wm_events(Callback callback)
+void WindowManager::for_each_window_manager(Callback callback)
 {
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (!window->listens_to_wm_events())
-            continue;
-        if (callback(*window) == IterationDecision::Break)
+    auto& connections = WMClientConnection::s_connections;
+
+    // FIXME: this isn't really ordered... does it need to be?
+    for (auto it = connections.begin(); it != connections.end(); ++it) {
+        if (callback(*it->value) == IterationDecision::Break)
             return;
     }
 }
@@ -473,8 +465,10 @@ void WindowManager::for_each_window_listening_to_wm_events(Callback callback)
 template<typename Callback>
 void WindowManager::for_each_window(Callback callback)
 {
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (callback(*window) == IterationDecision::Break)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (callback(window) == IterationDecision::Break)
             return;
     }
 }
@@ -487,12 +481,14 @@ IterationDecision WindowManager::for_each_window_of_type_from_front_to_back(Wind
             return IterationDecision::Break;
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (window->type() != type)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (window.type() != type)
             continue;
-        if (!ignore_highlight && window == m_highlight_window)
+        if (!ignore_highlight && &window == m_highlight_window)
             continue;
-        if (callback(*window) == IterationDecision::Break)
+        if (callback(window) == IterationDecision::Break)
             return IterationDecision::Break;
     }
     return IterationDecision::Continue;

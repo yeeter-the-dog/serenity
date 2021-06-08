@@ -1,28 +1,8 @@
 /*
- * Copyright (c) 2020, Matthew Olsson <matthewcolsson@gmail.com>
- * Copyright (c) 2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
+ * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Runtime/Accessor.h>
@@ -325,9 +305,13 @@ bool ProxyObject::has_property(const PropertyName& name) const
     return trap_result.to_boolean();
 }
 
-Value ProxyObject::get(const PropertyName& name, Value receiver) const
+Value ProxyObject::get(const PropertyName& name, Value receiver, bool without_side_effects) const
 {
     auto& vm = this->vm();
+    if (without_side_effects) {
+        // Sorry, we're not going to call anything on this proxy.
+        return js_string(vm, "<ProxyObject>");
+    }
     if (m_is_revoked) {
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return {};
@@ -390,33 +374,33 @@ bool ProxyObject::put(const PropertyName& name, Value value, Value receiver)
     return true;
 }
 
-Value ProxyObject::delete_property(const PropertyName& name)
+bool ProxyObject::delete_property(const PropertyName& name)
 {
     auto& vm = this->vm();
     if (m_is_revoked) {
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
-        return {};
+        return false;
     }
     auto trap = get_method(global_object(), Value(&m_handler), vm.names.deleteProperty);
     if (vm.exception())
-        return {};
+        return false;
     if (!trap)
         return m_target.delete_property(name);
     auto trap_result = vm.call(*trap, Value(&m_handler), Value(&m_target), name.to_value(vm));
     if (vm.exception())
-        return {};
+        return false;
     if (!trap_result.to_boolean())
-        return Value(false);
+        return false;
     auto target_desc = m_target.get_own_property_descriptor(name);
     if (vm.exception())
-        return {};
+        return false;
     if (!target_desc.has_value())
-        return Value(true);
+        return true;
     if (!target_desc.value().attributes.is_configurable()) {
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyDeleteNonConfigurable);
-        return {};
+        return false;
     }
-    return Value(true);
+    return true;
 }
 
 void ProxyObject::visit_edges(Cell::Visitor& visitor)

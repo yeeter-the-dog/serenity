@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -102,10 +82,10 @@ public:
     }
 
     template<size_t BUFFER_BYTES, typename F>
-    [[nodiscard]] ssize_t write_buffered(size_t offset, size_t len, F f)
+    [[nodiscard]] KResultOr<size_t> write_buffered(size_t offset, size_t len, F f)
     {
         if (!m_buffer)
-            return -EFAULT;
+            return EFAULT;
         if (is_kernel_buffer()) {
             // We're transferring directly to a kernel buffer, bypass
             return f(m_buffer + offset, len);
@@ -122,24 +102,24 @@ public:
                 return copied;
             VERIFY((size_t)copied <= to_copy);
             if (!write(buffer, nwritten, (size_t)copied))
-                return -EFAULT;
+                return EFAULT;
             nwritten += (size_t)copied;
             if ((size_t)copied < to_copy)
                 break;
         }
-        return (ssize_t)nwritten;
+        return nwritten;
     }
     template<size_t BUFFER_BYTES, typename F>
-    [[nodiscard]] ssize_t write_buffered(size_t len, F f)
+    [[nodiscard]] KResultOr<size_t> write_buffered(size_t len, F f)
     {
         return write_buffered<BUFFER_BYTES, F>(0, len, f);
     }
 
     template<size_t BUFFER_BYTES, typename F>
-    [[nodiscard]] ssize_t read_buffered(size_t offset, size_t len, F f) const
+    [[nodiscard]] KResultOr<size_t> read_buffered(size_t offset, size_t len, F f) const
     {
         if (!m_buffer)
-            return -EFAULT;
+            return EFAULT;
         if (is_kernel_buffer()) {
             // We're transferring directly from a kernel buffer, bypass
             return f(m_buffer + offset, len);
@@ -152,7 +132,7 @@ public:
         while (nread < len) {
             auto to_copy = min(sizeof(buffer), len - nread);
             if (!read(buffer, nread, to_copy))
-                return -EFAULT;
+                return EFAULT;
             ssize_t copied = f(buffer, to_copy);
             if (copied < 0)
                 return copied;
@@ -164,7 +144,7 @@ public:
         return nread;
     }
     template<size_t BUFFER_BYTES, typename F>
-    [[nodiscard]] ssize_t read_buffered(size_t len, F f) const
+    [[nodiscard]] KResultOr<size_t> read_buffered(size_t len, F f) const
     {
         return read_buffered<BUFFER_BYTES, F>(0, len, f);
     }

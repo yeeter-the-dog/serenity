@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -148,6 +128,11 @@ public:
         VERIFY(start <= size());
         return { this->m_values + start, size() - start };
     }
+    [[nodiscard]] ALWAYS_INLINE constexpr Span slice_from_end(size_t count) const
+    {
+        VERIFY(count <= size());
+        return { this->m_values + size() - count, count };
+    }
 
     [[nodiscard]] ALWAYS_INLINE constexpr Span trim(size_t length) const
     {
@@ -167,16 +152,16 @@ public:
         __builtin_memcpy(this->data() + offset, data, data_size);
     }
 
-    ALWAYS_INLINE constexpr size_t copy_to(Span<typename RemoveConst<T>::Type> other) const
+    ALWAYS_INLINE constexpr size_t copy_to(Span<RemoveConst<T>> other) const
     {
         VERIFY(other.size() >= size());
-        return TypedTransfer<typename RemoveConst<T>::Type>::copy(other.data(), data(), size());
+        return TypedTransfer<RemoveConst<T>>::copy(other.data(), data(), size());
     }
 
-    ALWAYS_INLINE constexpr size_t copy_trimmed_to(Span<typename RemoveConst<T>::Type> other) const
+    ALWAYS_INLINE constexpr size_t copy_trimmed_to(Span<RemoveConst<T>> other) const
     {
         const auto count = min(size(), other.size());
-        return TypedTransfer<typename RemoveConst<T>::Type>::copy(other.data(), data(), count);
+        return TypedTransfer<RemoveConst<T>>::copy(other.data(), data(), count);
     }
 
     ALWAYS_INLINE constexpr size_t fill(const T& value)
@@ -196,6 +181,14 @@ public:
         return false;
     }
 
+    bool constexpr starts_with(Span<const T> other) const
+    {
+        if (size() < other.size())
+            return false;
+
+        return TypedTransfer<T>::compare(data(), other.data(), other.size());
+    }
+
     ALWAYS_INLINE constexpr const T& at(size_t index) const
     {
         VERIFY(index < this->m_size);
@@ -207,7 +200,7 @@ public:
         return this->m_values[index];
     }
 
-    ALWAYS_INLINE constexpr T& operator[](size_t index) const
+    ALWAYS_INLINE constexpr const T& operator[](size_t index) const
     {
         return at(index);
     }

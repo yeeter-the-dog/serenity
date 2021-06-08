@@ -104,7 +104,7 @@ struct TypeBoundsChecker<Destination, Source, true, true, false> {
 };
 
 template<typename Destination, typename Source>
-constexpr bool is_within_range(Source value)
+[[nodiscard]] constexpr bool is_within_range(Source value)
 {
     return TypeBoundsChecker<Destination, Source>::is_within_range(value);
 }
@@ -149,7 +149,7 @@ public:
         return *this;
     }
 
-    constexpr bool has_overflow() const
+    [[nodiscard]] constexpr bool has_overflow() const
     {
         return m_overflow;
     }
@@ -183,6 +183,17 @@ public:
 
     constexpr void div(T other)
     {
+        if constexpr (IsSigned<T>) {
+            // Ensure that the resulting value won't be out of range, this can only happen when dividing by -1.
+            if (other == -1 && m_value == NumericLimits<T>::min()) {
+                m_overflow = true;
+                return;
+            }
+        }
+        if (other == 0) {
+            m_overflow = true;
+            return;
+        }
         m_value /= other;
     }
 
@@ -265,7 +276,7 @@ public:
     }
 
     template<typename U, typename V>
-    static constexpr bool addition_would_overflow(U u, V v)
+    [[nodiscard]] static constexpr bool addition_would_overflow(U u, V v)
     {
 #ifdef __clang__
         Checked checked;
@@ -278,7 +289,7 @@ public:
     }
 
     template<typename U, typename V>
-    static constexpr bool multiplication_would_overflow(U u, V v)
+    [[nodiscard]] static constexpr bool multiplication_would_overflow(U u, V v)
     {
 #ifdef __clang__
         Checked checked;
@@ -291,7 +302,7 @@ public:
     }
 
     template<typename U, typename V, typename X>
-    static constexpr bool multiplication_would_overflow(U u, V v, X x)
+    [[nodiscard]] static constexpr bool multiplication_would_overflow(U u, V v, X x)
     {
         Checked checked;
         checked = u;

@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Runtime/GlobalObject.h>
@@ -43,6 +23,9 @@ void TypedArrayPrototype::initialize(GlobalObject& object)
 
     // FIXME: This should be an accessor property
     define_native_property(vm.names.length, length_getter, nullptr, Attribute::Configurable);
+    define_native_property(vm.names.buffer, buffer_getter, nullptr, Attribute::Configurable);
+    define_native_property(vm.names.byteLength, byte_length_getter, nullptr, Attribute::Configurable);
+    define_native_property(vm.names.byteOffset, byte_offset_getter, nullptr, Attribute::Configurable);
     define_native_function(vm.names.at, at, 1, attr);
 }
 
@@ -91,6 +74,41 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayPrototype::at)
     if (index.has_overflow() || index.value() >= length)
         return js_undefined();
     return typed_array->get(index.value());
+}
+
+// https://tc39.es/ecma262/#sec-get-%typedarray%.prototype.buffer
+JS_DEFINE_NATIVE_FUNCTION(TypedArrayPrototype::buffer_getter)
+{
+    auto typed_array = typed_array_from(vm, global_object);
+    if (!typed_array)
+        return {};
+    auto* array_buffer = typed_array->viewed_array_buffer();
+    VERIFY(array_buffer);
+    return Value(array_buffer);
+}
+
+// https://tc39.es/ecma262/#sec-get-%typedarray%.prototype.bytelength
+JS_DEFINE_NATIVE_FUNCTION(TypedArrayPrototype::byte_length_getter)
+{
+    auto typed_array = typed_array_from(vm, global_object);
+    if (!typed_array)
+        return {};
+    auto* array_buffer = typed_array->viewed_array_buffer();
+    VERIFY(array_buffer);
+    // FIXME: If array_buffer is detached, return 0.
+    return Value(typed_array->byte_length());
+}
+
+// https://tc39.es/ecma262/#sec-get-%typedarray%.prototype.byteoffset
+JS_DEFINE_NATIVE_FUNCTION(TypedArrayPrototype::byte_offset_getter)
+{
+    auto typed_array = typed_array_from(vm, global_object);
+    if (!typed_array)
+        return {};
+    auto* array_buffer = typed_array->viewed_array_buffer();
+    VERIFY(array_buffer);
+    // FIXME: If array_buffer is detached, return 0.
+    return Value(typed_array->byte_offset());
 }
 
 }

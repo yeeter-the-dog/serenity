@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -49,6 +29,7 @@ void ObjectConstructor::initialize(GlobalObject& global_object)
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(vm.names.defineProperty, define_property_, 3, attr);
+    define_native_function(vm.names.defineProperties, define_properties, 2, attr);
     define_native_function(vm.names.is, is, 2, attr);
     define_native_function(vm.names.getOwnPropertyDescriptor, get_own_property_descriptor, 2, attr);
     define_native_function(vm.names.getOwnPropertyNames, get_own_property_names, 1, attr);
@@ -63,6 +44,8 @@ void ObjectConstructor::initialize(GlobalObject& global_object)
     define_native_function(vm.names.keys, keys, 1, attr);
     define_native_function(vm.names.values, values, 1, attr);
     define_native_function(vm.names.entries, entries, 1, attr);
+    define_native_function(vm.names.create, create, 2, attr);
+    define_native_function(vm.names.hasOwn, has_own, 2, attr);
 }
 
 ObjectConstructor::~ObjectConstructor()
@@ -89,16 +72,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_names)
     auto* object = vm.argument(0).to_object(global_object);
     if (vm.exception())
         return {};
-    auto* result = Array::create(global_object);
-    for (auto& entry : object->indexed_properties())
-        result->indexed_properties().append(js_string(vm, String::number(entry.index())));
-    for (auto& it : object->shape().property_table_ordered()) {
-        if (!it.key.is_string())
-            continue;
-        result->indexed_properties().append(js_string(vm, it.key.as_string()));
-    }
-
-    return result;
+    return Array::create_from(global_object, object->get_own_properties(PropertyKind::Key, false, GetOwnPropertyReturnType::StringOnly));
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_prototype_of)
@@ -216,7 +190,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_descriptor)
     auto* object = vm.argument(0).to_object(global_object);
     if (vm.exception())
         return {};
-    auto property_key = PropertyName::from_value(global_object, vm.argument(1));
+    auto property_key = vm.argument(1).to_property_key(global_object);
     if (vm.exception())
         return {};
     return object->get_own_property_descriptor_object(property_key);
@@ -228,14 +202,14 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_property_)
         vm.throw_exception<TypeError>(global_object, ErrorType::NotAnObject, "Object argument");
         return {};
     }
+    auto property_key = vm.argument(1).to_property_key(global_object);
+    if (vm.exception())
+        return {};
     if (!vm.argument(2).is_object()) {
         vm.throw_exception<TypeError>(global_object, ErrorType::NotAnObject, "Descriptor argument");
         return {};
     }
     auto& object = vm.argument(0).as_object();
-    auto property_key = StringOrSymbol::from_value(global_object, vm.argument(1));
-    if (vm.exception())
-        return {};
     auto& descriptor = vm.argument(2).as_object();
     if (!object.define_property(property_key, descriptor)) {
         if (!vm.exception()) {
@@ -247,6 +221,21 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_property_)
         }
         return {};
     }
+    return &object;
+}
+
+// 20.1.2.3 Object.defineProperties, https://tc39.es/ecma262/#sec-object.defineproperties
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_properties)
+{
+    if (!vm.argument(0).is_object()) {
+        vm.throw_exception<TypeError>(global_object, ErrorType::NotAnObject, "Object argument");
+        return {};
+    }
+    auto& object = vm.argument(0).as_object();
+    auto properties = vm.argument(1);
+    object.define_properties(properties);
+    if (vm.exception())
+        return {};
     return &object;
 }
 
@@ -293,6 +282,44 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::entries)
         return {};
 
     return Array::create_from(global_object, obj_arg->get_enumerable_own_property_names(PropertyKind::KeyAndValue));
+}
+
+// 20.1.2.2 Object.create, https://tc39.es/ecma262/#sec-object.create
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::create)
+{
+    auto prototype_value = vm.argument(0);
+    auto properties = vm.argument(1);
+
+    Object* prototype;
+    if (prototype_value.is_null()) {
+        prototype = nullptr;
+    } else if (prototype_value.is_object()) {
+        prototype = &prototype_value.as_object();
+    } else {
+        vm.throw_exception<TypeError>(global_object, ErrorType::ObjectPrototypeWrongType);
+        return {};
+    }
+
+    auto* object = Object::create_empty(global_object);
+    object->set_prototype(prototype);
+
+    if (!properties.is_undefined()) {
+        object->define_properties(properties);
+        if (vm.exception())
+            return {};
+    }
+    return object;
+}
+
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::has_own)
+{
+    auto* object = vm.argument(0).to_object(global_object);
+    if (vm.exception())
+        return {};
+    auto property_key = vm.argument(1).to_property_key(global_object);
+    if (vm.exception())
+        return {};
+    return Value(object->has_own_property(property_key));
 }
 
 }

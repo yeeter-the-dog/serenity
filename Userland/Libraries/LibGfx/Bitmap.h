@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -29,20 +9,22 @@
 #include <AK/Forward.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
+#include <LibCore/AnonymousBuffer.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
 
-#define ENUMERATE_IMAGE_FORMATS           \
-    __ENUMERATE_IMAGE_FORMAT(pbm, ".pbm") \
-    __ENUMERATE_IMAGE_FORMAT(pgm, ".pgm") \
-    __ENUMERATE_IMAGE_FORMAT(png, ".png") \
-    __ENUMERATE_IMAGE_FORMAT(ppm, ".ppm") \
-    __ENUMERATE_IMAGE_FORMAT(gif, ".gif") \
-    __ENUMERATE_IMAGE_FORMAT(bmp, ".bmp") \
-    __ENUMERATE_IMAGE_FORMAT(ico, ".ico") \
-    __ENUMERATE_IMAGE_FORMAT(jpg, ".jpg") \
-    __ENUMERATE_IMAGE_FORMAT(jpg, ".jpeg")
+#define ENUMERATE_IMAGE_FORMATS            \
+    __ENUMERATE_IMAGE_FORMAT(pbm, ".pbm")  \
+    __ENUMERATE_IMAGE_FORMAT(pgm, ".pgm")  \
+    __ENUMERATE_IMAGE_FORMAT(png, ".png")  \
+    __ENUMERATE_IMAGE_FORMAT(ppm, ".ppm")  \
+    __ENUMERATE_IMAGE_FORMAT(gif, ".gif")  \
+    __ENUMERATE_IMAGE_FORMAT(bmp, ".bmp")  \
+    __ENUMERATE_IMAGE_FORMAT(ico, ".ico")  \
+    __ENUMERATE_IMAGE_FORMAT(jpg, ".jpg")  \
+    __ENUMERATE_IMAGE_FORMAT(jpg, ".jpeg") \
+    __ENUMERATE_IMAGE_FORMAT(dds, ".dds")
 
 namespace Gfx {
 
@@ -102,23 +84,18 @@ static StorageFormat determine_storage_format(BitmapFormat format)
 struct BackingStore;
 
 enum RotationDirection {
-    Left,
-    Right
+    CounterClockwise,
+    Clockwise
 };
 
 class Bitmap : public RefCounted<Bitmap> {
 public:
-    enum class ShouldCloseAnonymousFile {
-        No,
-        Yes,
-    };
-
     static RefPtr<Bitmap> create(BitmapFormat, const IntSize&, int intrinsic_scale = 1);
     static RefPtr<Bitmap> create_shareable(BitmapFormat, const IntSize&, int intrinsic_scale = 1);
     static RefPtr<Bitmap> create_purgeable(BitmapFormat, const IntSize&, int intrinsic_scale = 1);
     static RefPtr<Bitmap> create_wrapper(BitmapFormat, const IntSize&, int intrinsic_scale, size_t pitch, void*);
-    static RefPtr<Bitmap> load_from_file(const StringView& path, int scale_factor = 1);
-    static RefPtr<Bitmap> create_with_anon_fd(BitmapFormat, int anon_fd, const IntSize&, int intrinsic_scale, const Vector<RGBA32>& palette, ShouldCloseAnonymousFile);
+    static RefPtr<Bitmap> load_from_file(String const& path, int scale_factor = 1);
+    static RefPtr<Bitmap> create_with_anonymous_buffer(BitmapFormat, Core::AnonymousBuffer, const IntSize&, int intrinsic_scale, const Vector<RGBA32>& palette);
     static RefPtr<Bitmap> create_from_serialized_byte_buffer(ByteBuffer&& buffer);
     static bool is_path_a_supported_image_format(const StringView& path)
     {
@@ -135,7 +112,10 @@ public:
 
     RefPtr<Gfx::Bitmap> rotated(Gfx::RotationDirection) const;
     RefPtr<Gfx::Bitmap> flipped(Gfx::Orientation) const;
-    RefPtr<Bitmap> to_bitmap_backed_by_anon_fd() const;
+    RefPtr<Gfx::Bitmap> scaled(int sx, int sy) const;
+    RefPtr<Gfx::Bitmap> scaled(float sx, float sy) const;
+    RefPtr<Gfx::Bitmap> cropped(Gfx::IntRect) const;
+    RefPtr<Bitmap> to_bitmap_backed_by_anonymous_buffer() const;
     ByteBuffer serialize_to_byte_buffer() const;
 
     ShareableBitmap to_shareable_bitmap() const;
@@ -221,7 +201,7 @@ public:
     bool has_alpha_channel() const { return m_format == BitmapFormat::BGRA8888; }
     BitmapFormat format() const { return m_format; }
 
-    void set_mmap_name(const StringView&);
+    void set_mmap_name(String const&);
 
     static constexpr size_t size_in_bytes(size_t pitch, int physical_height) { return pitch * physical_height; }
     size_t size_in_bytes() const { return size_in_bytes(m_pitch, physical_height()); }
@@ -250,7 +230,8 @@ public:
     void set_volatile();
     [[nodiscard]] bool set_nonvolatile();
 
-    int anon_fd() const { return m_anon_fd; }
+    Core::AnonymousBuffer& anonymous_buffer() { return m_buffer; }
+    const Core::AnonymousBuffer& anonymous_buffer() const { return m_buffer; }
 
 private:
     enum class Purgeable {
@@ -259,7 +240,7 @@ private:
     };
     Bitmap(BitmapFormat, const IntSize&, int, Purgeable, const BackingStore&);
     Bitmap(BitmapFormat, const IntSize&, int, size_t pitch, void*);
-    Bitmap(BitmapFormat, int anon_fd, const IntSize&, int, void*, const Vector<RGBA32>& palette);
+    Bitmap(BitmapFormat, Core::AnonymousBuffer, const IntSize&, int, const Vector<RGBA32>& palette);
 
     static Optional<BackingStore> allocate_backing_store(BitmapFormat, const IntSize&, int, Purgeable);
 
@@ -274,7 +255,7 @@ private:
     bool m_needs_munmap { false };
     bool m_purgeable { false };
     bool m_volatile { false };
-    int m_anon_fd { -1 };
+    Core::AnonymousBuffer m_buffer;
 };
 
 inline u8* Bitmap::scanline_u8(int y)

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -66,6 +46,11 @@ namespace Kernel {
 #define PCI_MAX_DEVICES_PER_BUS 32
 #define PCI_MAX_BUSES 256
 #define PCI_MAX_FUNCTIONS_PER_DEVICE 8
+
+#define PCI_CAPABILITY_NULL 0x0
+#define PCI_CAPABILITY_MSI 0x5
+#define PCI_CAPABILITY_VENDOR_SPECIFIC 0x9
+#define PCI_CAPABILITY_MSIX 0x11
 
 namespace PCI {
 struct ID {
@@ -171,9 +156,28 @@ struct ChangeableAddress : public Address {
     }
 };
 
-struct Capability {
-    u8 m_id;
-    u8 m_next_pointer;
+class Capability {
+public:
+    Capability(const Address& address, u8 id, u8 ptr)
+        : m_address(address)
+        , m_id(id)
+        , m_ptr(ptr)
+    {
+    }
+
+    u8 id() const { return m_id; }
+
+    u8 read8(u32) const;
+    u16 read16(u32) const;
+    u32 read32(u32) const;
+    void write8(u32, u8);
+    void write16(u32, u16);
+    void write32(u32, u32);
+
+private:
+    Address m_address;
+    const u8 m_id;
+    const u8 m_ptr;
 };
 
 class PhysicalID {
@@ -185,7 +189,7 @@ public:
     {
         if constexpr (PCI_DEBUG) {
             for (auto capability : capabilities)
-                dbgln("{} has capability {}", address, capability.m_id);
+                dbgln("{} has capability {}", address, capability.id());
         }
     }
 
@@ -200,6 +204,7 @@ private:
 };
 
 ID get_id(PCI::Address);
+bool is_io_space_enabled(Address);
 void enumerate(Function<void(Address, ID)> callback);
 void enable_interrupt_line(Address);
 void disable_interrupt_line(Address);
@@ -211,6 +216,7 @@ u32 get_BAR2(Address);
 u32 get_BAR3(Address);
 u32 get_BAR4(Address);
 u32 get_BAR5(Address);
+u32 get_BAR(Address address, u8 bar);
 u8 get_revision_id(Address);
 u8 get_programming_interface(Address);
 u8 get_subclass(Address);
@@ -222,6 +228,10 @@ Optional<u8> get_capabilities_pointer(Address);
 Vector<Capability> get_capabilities(Address);
 void enable_bus_mastering(Address);
 void disable_bus_mastering(Address);
+void enable_io_space(Address);
+void disable_io_space(Address);
+void enable_memory_space(Address);
+void disable_memory_space(Address);
 PhysicalID get_physical_id(Address address);
 
 class Access;

@@ -1,31 +1,15 @@
 /*
- * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@gmx.de>
- * All rights reserved.
+ * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Debug.h>
 #include <AK/Function.h>
 #include <LibJS/AST.h>
+#include <LibJS/Bytecode/Block.h>
+#include <LibJS/Bytecode/Generator.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
@@ -91,13 +75,27 @@ LexicalEnvironment* ScriptFunction::create_environment()
 {
     HashMap<FlyString, Variable> variables;
     for (auto& parameter : m_parameters) {
-        variables.set(parameter.name, { js_undefined(), DeclarationKind::Var });
+        parameter.binding.visit(
+            [&](const FlyString& name) { variables.set(name, { js_undefined(), DeclarationKind::Var }); },
+            [&](const NonnullRefPtr<BindingPattern>& binding) {
+                binding->for_each_assigned_name([&](const auto& name) {
+                    variables.set(name, { js_undefined(), DeclarationKind::Var });
+                });
+            });
     }
 
     if (is<ScopeNode>(body())) {
         for (auto& declaration : static_cast<const ScopeNode&>(body()).variables()) {
             for (auto& declarator : declaration.declarations()) {
-                variables.set(declarator.id().string(), { js_undefined(), declaration.declaration_kind() });
+                declarator.target().visit(
+                    [&](const NonnullRefPtr<Identifier>& id) {
+                        variables.set(id->string(), { js_undefined(), declaration.declaration_kind() });
+                    },
+                    [&](const NonnullRefPtr<BindingPattern>& binding) {
+                        binding->for_each_assigned_name([&](const auto& name) {
+                            variables.set(name, { js_undefined(), declaration.declaration_kind() });
+                        });
+                    });
             }
         }
     }
@@ -116,38 +114,69 @@ Value ScriptFunction::execute_function_body()
 {
     auto& vm = this->vm();
 
-    OwnPtr<Interpreter> local_interpreter;
-    Interpreter* interpreter = vm.interpreter_if_exists();
+    Interpreter* ast_interpreter = nullptr;
+    auto* bytecode_interpreter = Bytecode::Interpreter::current();
 
-    if (!interpreter) {
-        local_interpreter = Interpreter::create_with_existing_global_object(global_object());
-        interpreter = local_interpreter.ptr();
-    }
+    auto prepare_arguments = [&] {
+        auto& call_frame_args = vm.call_frame().arguments;
+        for (size_t i = 0; i < m_parameters.size(); ++i) {
+            auto& parameter = m_parameters[i];
+            parameter.binding.visit(
+                [&](const auto& param) {
+                    Value argument_value;
+                    if (parameter.is_rest) {
+                        auto* array = Array::create(global_object());
+                        for (size_t rest_index = i; rest_index < call_frame_args.size(); ++rest_index)
+                            array->indexed_properties().append(call_frame_args[rest_index]);
+                        argument_value = move(array);
+                    } else if (i < call_frame_args.size() && !call_frame_args[i].is_undefined()) {
+                        argument_value = call_frame_args[i];
+                    } else if (parameter.default_value) {
+                        // FIXME: Support default arguments in the bytecode world!
+                        if (!bytecode_interpreter)
+                            argument_value = parameter.default_value->execute(*ast_interpreter, global_object());
+                        if (vm.exception())
+                            return;
+                    } else {
+                        argument_value = js_undefined();
+                    }
 
-    VM::InterpreterExecutionScope scope(*interpreter);
+                    vm.assign(param, argument_value, global_object(), true, vm.current_scope());
+                });
 
-    auto& call_frame_args = vm.call_frame().arguments;
-    for (size_t i = 0; i < m_parameters.size(); ++i) {
-        auto parameter = m_parameters[i];
-        Value argument_value;
-        if (parameter.is_rest) {
-            auto* array = Array::create(global_object());
-            for (size_t rest_index = i; rest_index < call_frame_args.size(); ++rest_index)
-                array->indexed_properties().append(call_frame_args[rest_index]);
-            argument_value = move(array);
-        } else if (i < call_frame_args.size() && !call_frame_args[i].is_undefined()) {
-            argument_value = call_frame_args[i];
-        } else if (parameter.default_value) {
-            argument_value = parameter.default_value->execute(*interpreter, global_object());
             if (vm.exception())
-                return {};
-        } else {
-            argument_value = js_undefined();
+                return;
         }
-        vm.current_scope()->put_to_scope(parameter.name, { argument_value, DeclarationKind::Var });
-    }
+    };
 
-    return interpreter->execute_statement(global_object(), m_body, ScopeType::Function);
+    if (bytecode_interpreter) {
+        prepare_arguments();
+        if (!m_bytecode_block) {
+            m_bytecode_block = Bytecode::Generator::generate(m_body);
+            VERIFY(m_bytecode_block);
+            if constexpr (JS_BYTECODE_DEBUG) {
+                dbgln("Compiled Bytecode::Block for function '{}':", m_name);
+                m_bytecode_block->dump();
+            }
+        }
+        return bytecode_interpreter->run(*m_bytecode_block);
+    } else {
+        OwnPtr<Interpreter> local_interpreter;
+        ast_interpreter = vm.interpreter_if_exists();
+
+        if (!ast_interpreter) {
+            local_interpreter = Interpreter::create_with_existing_global_object(global_object());
+            ast_interpreter = local_interpreter.ptr();
+        }
+
+        VM::InterpreterExecutionScope scope(*ast_interpreter);
+
+        prepare_arguments();
+        if (vm.exception())
+            return {};
+
+        return ast_interpreter->execute_statement(global_object(), m_body, ScopeType::Function);
+    }
 }
 
 Value ScriptFunction::call()

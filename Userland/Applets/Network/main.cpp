@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibCore/ArgsParser.h>
@@ -128,8 +108,8 @@ private:
         StringBuilder adapter_info;
 
         auto file = Core::File::construct("/proc/net/adapters");
-        if (!file->open(Core::IODevice::ReadOnly)) {
-            fprintf(stderr, "Error: %s\n", file->error_string());
+        if (!file->open(Core::OpenMode::ReadOnly)) {
+            dbgln("Error: Could not open {}: {}", file->name(), file->error_string());
             return adapter_info.to_string();
         }
 
@@ -141,17 +121,17 @@ private:
 
         int connected_adapters = 0;
         json.value().as_array().for_each([&adapter_info, include_loopback, &connected_adapters](auto& value) {
-            auto if_object = value.as_object();
+            auto& if_object = value.as_object();
             auto ip_address = if_object.get("ipv4_address").to_string();
             auto ifname = if_object.get("name").to_string();
 
             if (!include_loopback)
-                if (ifname == "loop0")
+                if (ifname == "loop")
                     return;
             if (ip_address != "null")
                 connected_adapters++;
 
-            adapter_info.appendf("%s: %s\n", ifname.characters(), ip_address.characters());
+            adapter_info.appendff("{}: {}\n", ifname, ip_address);
         });
 
         // show connected icon so long as at least one adapter is connected
@@ -169,17 +149,12 @@ private:
 
 int main(int argc, char* argv[])
 {
-    if (pledge("stdio recvfd sendfd accept rpath unix cpath fattr unix proc exec", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath unix proc exec", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
-
-    if (pledge("stdio recvfd sendfd accept rpath unix proc exec", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
 
     if (unveil("/res", "r") < 0) {
         perror("unveil");

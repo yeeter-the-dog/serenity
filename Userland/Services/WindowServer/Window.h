@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -43,7 +23,7 @@ class ClientConnection;
 class Cursor;
 class KeyEvent;
 class Menu;
-class MenuBar;
+class Menubar;
 class MenuItem;
 class MouseEvent;
 
@@ -66,9 +46,12 @@ enum class WindowTileType {
     BottomRight
 };
 
-enum class PopupMenuItem {
-    Minimize = 0,
-    Maximize,
+enum class WindowMenuAction {
+    MinimizeOrUnminimize = 0,
+    MaximizeOrRestore,
+    ToggleMenubarVisibility,
+    Close,
+    Move,
 };
 
 enum class WindowMenuDefaultAction {
@@ -81,20 +64,19 @@ enum class WindowMenuDefaultAction {
     Restore
 };
 
-class Window final : public Core::Object
-    , public InlineLinkedListNode<Window> {
-    C_OBJECT(Window)
+class Window final : public Core::Object {
+    C_OBJECT(Window);
+
 public:
-    Window(ClientConnection&, WindowType, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window = nullptr);
-    Window(Core::Object&, WindowType);
     virtual ~Window() override;
 
+    bool is_modified() const { return m_modified; }
+    void set_modified(bool);
+
     void popup_window_menu(const Gfx::IntPoint&, WindowMenuDefaultAction);
+    void handle_window_menu_action(WindowMenuAction);
     void window_menu_activate_default();
     void request_close();
-
-    unsigned wm_event_mask() const { return m_wm_event_mask; }
-    void set_wm_event_mask(unsigned mask) { m_wm_event_mask = mask; }
 
     bool is_minimized() const { return m_minimized; }
     void set_minimized(bool);
@@ -130,8 +112,6 @@ public:
 
     Window* blocking_modal_window();
 
-    bool listens_to_wm_events() const { return m_listens_to_wm_events; }
-
     ClientConnection* client() { return m_client; }
     const ClientConnection* client() const { return m_client; }
 
@@ -143,6 +123,8 @@ public:
 
     String title() const { return m_title; }
     void set_title(const String&);
+
+    String computed_title() const;
 
     float opacity() const { return m_opacity; }
     void set_opacity(float);
@@ -280,10 +262,7 @@ public:
     Gfx::IntRect tiled_rect(WindowTileType) const;
     void recalculate_rect();
 
-    // For InlineLinkedList.
-    // FIXME: Maybe make a ListHashSet and then WindowManager can just use that.
-    Window* m_next { nullptr };
-    Window* m_prev { nullptr };
+    IntrusiveListNode<Window> m_list_node;
 
     void detach_client(Badge<ClientConnection>);
 
@@ -309,16 +288,14 @@ public:
 
     bool should_show_menubar() const { return m_should_show_menubar; }
 
-    int progress() const { return m_progress; }
-    void set_progress(int);
+    Optional<int> progress() const { return m_progress; }
+    void set_progress(Optional<int>);
 
     bool is_destroyed() const { return m_destroyed; }
     void destroy();
 
     bool default_positioned() const { return m_default_positioned; }
     void set_default_positioned(bool p) { m_default_positioned = p; }
-
-    bool is_invalidated() const { return m_invalidated; }
 
     bool is_opaque() const
     {
@@ -333,19 +310,21 @@ public:
     Gfx::DisjointRectSet& transparency_rects() { return m_transparency_rects; }
     Gfx::DisjointRectSet& transparency_wallpaper_rects() { return m_transparency_wallpaper_rects; }
 
-    MenuBar* menubar() { return m_menubar; }
-    const MenuBar* menubar() const { return m_menubar; }
-    void set_menubar(MenuBar*);
+    Menubar* menubar() { return m_menubar; }
+    const Menubar* menubar() const { return m_menubar; }
+    void set_menubar(Menubar*);
 
 private:
+    Window(ClientConnection&, WindowType, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window = nullptr);
+    Window(Core::Object&, WindowType);
+
     virtual void event(Core::Event&) override;
     void handle_mouse_event(const MouseEvent&);
     void handle_keydown_event(const KeyEvent&);
-    void update_menu_item_text(PopupMenuItem item);
-    void update_menu_item_enabled(PopupMenuItem item);
     void add_child_window(Window&);
     void add_accessory_window(Window&);
     void ensure_window_menu();
+    void update_window_menu_items();
     void modal_unparented();
 
     ClientConnection* m_client { nullptr };
@@ -354,7 +333,7 @@ private:
     Vector<WeakPtr<Window>> m_child_windows;
     Vector<WeakPtr<Window>> m_accessory_windows;
 
-    RefPtr<MenuBar> m_menubar;
+    RefPtr<Menubar> m_menubar;
 
     String m_title;
     Gfx::IntRect m_rect;
@@ -374,7 +353,6 @@ private:
     bool m_frameless { false };
     bool m_resizable { false };
     Optional<Gfx::IntSize> m_resize_aspect_ratio {};
-    bool m_listens_to_wm_events { false };
     bool m_minimized { false };
     bool m_maximized { false };
     bool m_fullscreen { false };
@@ -386,6 +364,7 @@ private:
     bool m_invalidated_all { true };
     bool m_invalidated_frame { true };
     bool m_hit_testing_enabled { true };
+    bool m_modified { false };
     WindowTileType m_tiled { WindowTileType::None };
     Gfx::IntRect m_untiled_rect;
     bool m_occluded { false };
@@ -404,18 +383,21 @@ private:
     RefPtr<Cursor> m_cursor;
     RefPtr<Cursor> m_cursor_override;
     WindowFrame m_frame;
-    unsigned m_wm_event_mask { 0 };
     Gfx::DisjointRectSet m_pending_paint_rects;
     Gfx::IntRect m_unmaximized_rect;
     Gfx::IntRect m_rect_in_applet_area;
     RefPtr<Menu> m_window_menu;
     MenuItem* m_window_menu_minimize_item { nullptr };
     MenuItem* m_window_menu_maximize_item { nullptr };
+    MenuItem* m_window_menu_move_item { nullptr };
     MenuItem* m_window_menu_close_item { nullptr };
     MenuItem* m_window_menu_menubar_visibility_item { nullptr };
     int m_minimize_animation_step { -1 };
-    int m_progress { -1 };
+    Optional<int> m_progress;
     bool m_should_show_menubar { true };
+
+public:
+    using List = IntrusiveList<Window, RawPtr<Window>, &Window::m_list_node>;
 };
 
 }

@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Shannon Booth <shannon.ml.booth@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Badge.h>
@@ -34,7 +14,6 @@
 namespace WindowServer {
 
 static MenuManager* s_the;
-static constexpr int s_search_timeout = 3000;
 
 MenuManager& MenuManager::the()
 {
@@ -45,10 +24,6 @@ MenuManager& MenuManager::the()
 MenuManager::MenuManager()
 {
     s_the = this;
-
-    m_search_timer = Core::Timer::create_single_shot(0, [this] {
-        m_current_search.clear();
-    });
 }
 
 MenuManager::~MenuManager()
@@ -91,23 +66,23 @@ void MenuManager::event(Core::Event& event)
             return;
         }
 
-        if (key_event.key() == Key_Backspace) {
-            m_current_search.clear();
-            return;
-        }
-
         if (m_current_menu && event.type() == Event::KeyDown
             && ((key_event.key() >= Key_A && key_event.key() <= Key_Z)
                 || (key_event.key() >= Key_0 && key_event.key() <= Key_9))) {
-            m_current_search.append_code_point(key_event.code_point());
-            m_search_timer->restart(s_search_timeout);
-            for (int i = 0; i < m_current_menu->item_count(); ++i) {
-                auto text = m_current_menu->item(i).text();
-                if (text.to_lowercase().starts_with(m_current_search.to_string().to_lowercase())) {
-                    m_current_menu->set_hovered_item(i);
-                    return;
-                }
+
+            if (auto* shortcut_item_indices = m_current_menu->items_with_alt_shortcut(key_event.code_point())) {
+                VERIFY(!shortcut_item_indices->is_empty());
+                // FIXME: If there are multiple items with the same Alt shortcut, we should cycle through them
+                //        with each keypress instead of activating immediately.
+                auto index = shortcut_item_indices->at(0);
+                auto& item = m_current_menu->item(index);
+                m_current_menu->set_hovered_index(index);
+                if (item.is_submenu())
+                    m_current_menu->descend_into_submenu_at_hovered_item();
+                else
+                    m_current_menu->open_hovered_item(false);
             }
+
             return;
         }
 
@@ -122,7 +97,7 @@ void MenuManager::event(Core::Event& event)
                     set_current_menu(m_open_menu_stack.at(it.index() - 1));
                 else {
                     if (m_current_menu->hovered_item())
-                        m_current_menu->set_hovered_item(-1);
+                        m_current_menu->set_hovered_index(-1);
                     else {
                         auto* target_menu = previous_menu(m_current_menu);
                         if (target_menu) {
@@ -246,42 +221,41 @@ void MenuManager::close_everyone()
         menu->clear_hovered_item();
     }
     m_open_menu_stack.clear();
-    m_current_search.clear();
     clear_current_menu();
     refresh();
 }
 
 void MenuManager::close_everyone_not_in_lineage(Menu& menu)
 {
-    Vector<Menu*> menus_to_close;
+    Vector<Menu&> menus_to_close;
     for (auto& open_menu : m_open_menu_stack) {
         if (!open_menu)
             continue;
         if (&menu == open_menu.ptr() || open_menu->is_menu_ancestor_of(menu))
             continue;
-        menus_to_close.append(open_menu);
+        menus_to_close.append(*open_menu);
     }
     close_menus(menus_to_close);
 }
 
-void MenuManager::close_menus(const Vector<Menu*>& menus)
+void MenuManager::close_menus(const Vector<Menu&>& menus)
 {
     for (auto& menu : menus) {
-        if (menu == m_current_menu)
+        if (&menu == m_current_menu)
             clear_current_menu();
-        menu->set_visible(false);
-        menu->clear_hovered_item();
+        menu.set_visible(false);
+        menu.clear_hovered_item();
         m_open_menu_stack.remove_first_matching([&](auto& entry) {
-            return entry == menu;
+            return entry == &menu;
         });
     }
     refresh();
 }
 
-static void collect_menu_subtree(Menu& menu, Vector<Menu*>& menus)
+static void collect_menu_subtree(Menu& menu, Vector<Menu&>& menus)
 {
-    menus.append(&menu);
-    for (int i = 0; i < menu.item_count(); ++i) {
+    menus.append(menu);
+    for (size_t i = 0; i < menu.item_count(); ++i) {
         auto& item = menu.item(i);
         if (!item.is_submenu())
             continue;
@@ -291,7 +265,7 @@ static void collect_menu_subtree(Menu& menu, Vector<Menu*>& menus)
 
 void MenuManager::close_menu_and_descendants(Menu& menu)
 {
-    Vector<Menu*> menus_to_close;
+    Vector<Menu&> menus_to_close;
     collect_menu_subtree(menu, menus_to_close);
     close_menus(menus_to_close);
 }
@@ -317,7 +291,7 @@ void MenuManager::set_hovered_menu(Menu* menu)
 
 void MenuManager::open_menu(Menu& menu, bool as_current_menu)
 {
-    if (is_open(menu)) {
+    if (menu.is_open()) {
         if (as_current_menu || current_menu() != &menu) {
             // This menu is already open. If requested, or if the current
             // window doesn't match this one, then set it to this
@@ -371,8 +345,6 @@ void MenuManager::set_current_menu(Menu* menu)
     if (menu == m_current_menu) {
         return;
     }
-
-    m_current_search.clear();
 
     Menu* previous_current_menu = m_current_menu;
     m_current_menu = menu;

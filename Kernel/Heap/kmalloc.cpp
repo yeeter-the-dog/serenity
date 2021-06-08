@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 /*
@@ -38,6 +18,7 @@
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/KSyms.h>
 #include <Kernel/Panic.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/Scheduler.h>
 #include <Kernel/SpinLock.h>
@@ -209,6 +190,7 @@ __attribute__((section(".heap"))) static u8 kmalloc_pool_heap[POOL_SIZE];
 static size_t g_kmalloc_bytes_eternal = 0;
 static size_t g_kmalloc_call_count;
 static size_t g_kfree_call_count;
+static size_t g_nested_kfree_calls;
 bool g_dump_kmalloc_stacks;
 
 static u8* s_next_eternal_ptr;
@@ -222,6 +204,14 @@ static void kmalloc_allocate_backup_memory()
 void kmalloc_enable_expand()
 {
     g_kmalloc_global->allocate_backup_memory();
+}
+
+static inline void kmalloc_verify_nospinlock_held()
+{
+    // Catch bad callers allocating under spinlock.
+    if constexpr (KMALLOC_VERIFY_NO_SPINLOCK_HELD) {
+        VERIFY(!Processor::current().in_critical());
+    }
 }
 
 UNMAP_AFTER_INIT void kmalloc_init()
@@ -239,6 +229,8 @@ UNMAP_AFTER_INIT void kmalloc_init()
 
 void* kmalloc_eternal(size_t size)
 {
+    kmalloc_verify_nospinlock_held();
+
     size = round_up_to_power_of_two(size, sizeof(void*));
 
     ScopedSpinLock lock(s_lock);
@@ -251,6 +243,7 @@ void* kmalloc_eternal(size_t size)
 
 void* kmalloc(size_t size)
 {
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     ++g_kmalloc_call_count;
 
@@ -264,6 +257,12 @@ void* kmalloc(size_t size)
         PANIC("kmalloc: Out of memory (requested size: {})", size);
     }
 
+    Thread* current_thread = Thread::current();
+    if (!current_thread)
+        current_thread = Processor::idle_thread();
+    if (current_thread)
+        PerformanceManager::add_kmalloc_perf_event(*current_thread, size, (FlatPtr)ptr);
+
     return ptr;
 }
 
@@ -272,26 +271,63 @@ void kfree(void* ptr)
     if (!ptr)
         return;
 
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     ++g_kfree_call_count;
+    ++g_nested_kfree_calls;
+
+    if (g_nested_kfree_calls == 1) {
+        Thread* current_thread = Thread::current();
+        if (!current_thread)
+            current_thread = Processor::idle_thread();
+        if (current_thread)
+            PerformanceManager::add_kfree_perf_event(*current_thread, 0, (FlatPtr)ptr);
+    }
 
     g_kmalloc_global->m_heap.deallocate(ptr);
+    --g_nested_kfree_calls;
 }
 
 void* krealloc(void* ptr, size_t new_size)
 {
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     return g_kmalloc_global->m_heap.reallocate(ptr, new_size);
 }
 
-void* operator new(size_t size)
+size_t kmalloc_good_size(size_t size)
+{
+    return size;
+}
+
+void* operator new(size_t size) noexcept
 {
     return kmalloc(size);
 }
 
-void* operator new[](size_t size)
+void* operator new[](size_t size) noexcept
 {
     return kmalloc(size);
+}
+
+void operator delete(void* ptr) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete(void* ptr, size_t) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete[](void* ptr) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete[](void* ptr, size_t) noexcept
+{
+    return kfree(ptr);
 }
 
 void get_kmalloc_stats(kmalloc_stats& stats)

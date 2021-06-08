@@ -1,34 +1,14 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <LibGUI/HeaderView.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/TreeView.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Palette.h>
@@ -168,6 +148,10 @@ void TreeView::toggle_index(const ModelIndex& index)
     VERIFY(model()->row_count(index));
     auto& metadata = ensure_metadata_for_index(index);
     metadata.open = !metadata.open;
+
+    if (!metadata.open && index.is_parent_of(cursor_index()))
+        set_cursor(index, SelectionUpdate::Set);
+
     if (on_toggle)
         on_toggle(index, metadata.open);
     update_column_sizes();
@@ -180,6 +164,7 @@ void TreeView::traverse_in_paint_order(Callback callback) const
 {
     VERIFY(model());
     auto& model = *this->model();
+    auto tree_column = model.tree_column();
     int indent_level = 1;
     int y_offset = 0;
     int tree_column_x_offset = this->tree_column_x_offset();
@@ -214,7 +199,7 @@ void TreeView::traverse_in_paint_order(Callback callback) const
         ++indent_level;
         int row_count = model.row_count(index);
         for (int i = 0; i < row_count; ++i) {
-            if (traverse_index(model.index(i, model.tree_column(), index)) == IterationDecision::Break)
+            if (traverse_index(model.index(i, tree_column, index)) == IterationDecision::Break)
                 return IterationDecision::Break;
         }
         --indent_level;
@@ -222,7 +207,7 @@ void TreeView::traverse_in_paint_order(Callback callback) const
     };
     int root_count = model.row_count();
     for (int root_index = 0; root_index < root_count; ++root_index) {
-        if (traverse_index(model.index(root_index, model.tree_column(), ModelIndex())) == IterationDecision::Break)
+        if (traverse_index(model.index(root_index, tree_column, ModelIndex())) == IterationDecision::Break)
             break;
     }
 }
@@ -245,6 +230,7 @@ void TreeView::paint_event(PaintEvent& event)
 
     auto visible_content_rect = this->visible_content_rect();
     int tree_column = model.tree_column();
+    int column_count = model.column_count();
     int tree_column_x_offset = this->tree_column_x_offset();
 
     int y_offset = column_header().height();
@@ -258,9 +244,8 @@ void TreeView::paint_event(PaintEvent& event)
         auto rect = a_rect.translated(0, y_offset);
         auto toggle_rect = a_toggle_rect.translated(0, y_offset);
 
-#if ITEM_RECTS_DEBUG
-        painter.fill_rect(rect, Color::WarmGray);
-#endif
+        if constexpr (ITEM_RECTS_DEBUG)
+            painter.fill_rect(rect, Color::WarmGray);
 
         bool is_selected_row = selection().contains(index);
 
@@ -284,7 +269,7 @@ void TreeView::paint_event(PaintEvent& event)
         }
 
         int row_width = 0;
-        for (int column_index = 0; column_index < model.column_count(); ++column_index) {
+        for (int column_index = 0; column_index < column_count; ++column_index) {
             if (!column_header().is_section_visible(column_index))
                 continue;
             row_width += this->column_width(column_index) + horizontal_padding() * 2;
@@ -299,7 +284,7 @@ void TreeView::paint_event(PaintEvent& event)
             painter.fill_rect(row_rect, background_color);
 
         int x_offset = 0;
-        for (int column_index = 0; column_index < model.column_count(); ++column_index) {
+        for (int column_index = 0; column_index < column_count; ++column_index) {
             if (!column_header().is_section_visible(column_index))
                 continue;
             int column_width = this->column_width(column_index);
@@ -389,7 +374,7 @@ void TreeView::paint_event(PaintEvent& event)
     });
 }
 
-void TreeView::scroll_into_view(const ModelIndex& a_index, bool scroll_horizontally, bool scroll_vertically)
+void TreeView::scroll_into_view(const ModelIndex& a_index, bool, bool scroll_vertically)
 {
     if (!a_index.is_valid())
         return;
@@ -401,7 +386,7 @@ void TreeView::scroll_into_view(const ModelIndex& a_index, bool scroll_horizonta
         }
         return IterationDecision::Continue;
     });
-    ScrollableWidget::scroll_into_view(found_rect, scroll_horizontally, scroll_vertically);
+    AbstractScrollableWidget::scroll_into_view(found_rect, false, scroll_vertically);
 }
 
 void TreeView::model_did_update(unsigned flags)
@@ -493,54 +478,121 @@ void TreeView::keydown_event(KeyEvent& event)
 
 void TreeView::move_cursor(CursorMovement movement, SelectionUpdate selection_update)
 {
+    auto& model = *this->model();
+
+    if (!cursor_index().is_valid())
+        set_cursor(model.index(0, model.tree_column(), cursor_index()), SelectionUpdate::Set);
+
+    auto find_last_index_in_tree = [&](const ModelIndex tree_index) -> ModelIndex {
+        auto last_index = tree_index;
+        size_t row_count = model.row_count(last_index);
+        while (row_count > 0) {
+            last_index = model.index(row_count - 1, model.tree_column(), last_index);
+
+            if (last_index.is_valid()) {
+                if (model.row_count(last_index) == 0)
+                    break;
+                auto& metadata = ensure_metadata_for_index(last_index);
+                if (!metadata.open)
+                    break;
+            }
+
+            row_count = model.row_count(last_index);
+        }
+        return last_index;
+    };
+
+    auto step_up = [&](const ModelIndex current_index) -> ModelIndex {
+        // Traverse into parent index if we're at the top of our subtree
+        if (current_index.row() == 0) {
+            auto parent_index = current_index.parent();
+            if (parent_index.is_valid())
+                return parent_index;
+            return current_index;
+        }
+
+        // If previous index is closed, move to it immediately
+        auto previous_index = model.index(current_index.row() - 1, model.tree_column(), current_index.parent());
+        if (model.row_count(previous_index) == 0)
+            return previous_index;
+        auto& metadata = ensure_metadata_for_index(previous_index);
+        if (!metadata.open)
+            return previous_index;
+
+        // Return very last index inside of open previous index
+        return find_last_index_in_tree(previous_index);
+    };
+
+    auto step_down = [&](const ModelIndex current_index) -> ModelIndex {
+        if (!current_index.is_valid())
+            return current_index;
+
+        // Step in when node is open
+        if (model.row_count(current_index) > 0) {
+            auto& metadata = ensure_metadata_for_index(current_index);
+            if (metadata.open)
+                return model.index(0, model.tree_column(), current_index);
+        }
+
+        // Find the parent index in which we must step one down
+        auto child_index = current_index;
+        auto parent_index = child_index.parent();
+        int row_count = model.row_count(parent_index);
+        while (child_index.is_valid() && child_index.row() >= row_count - 1) {
+            child_index = parent_index;
+            parent_index = parent_index.parent();
+            row_count = model.row_count(parent_index);
+        }
+
+        // Step one down
+        if (!child_index.is_valid())
+            return current_index;
+        return model.index(child_index.row() + 1, child_index.column(), parent_index);
+    };
+
     switch (movement) {
     case CursorMovement::Up: {
-        ModelIndex previous_index;
-        ModelIndex found_index;
-        traverse_in_paint_order([&](const ModelIndex& index, const Gfx::IntRect&, const Gfx::IntRect&, int) {
-            if (index == cursor_index()) {
-                found_index = previous_index;
-                return IterationDecision::Break;
-            }
-            previous_index = index;
-            return IterationDecision::Continue;
-        });
-        if (found_index.is_valid())
-            set_cursor(found_index, selection_update);
+        auto new_index = step_up(cursor_index());
+        if (new_index.is_valid())
+            set_cursor(new_index, selection_update);
         break;
     }
     case CursorMovement::Down: {
-        ModelIndex previous_index;
-        ModelIndex found_index;
-        traverse_in_paint_order([&](const ModelIndex& index, const Gfx::IntRect&, const Gfx::IntRect&, int) {
-            if (previous_index == cursor_index()) {
-                found_index = index;
-                return IterationDecision::Break;
-            }
-            previous_index = index;
-            return IterationDecision::Continue;
-        });
-        if (found_index.is_valid())
-            set_cursor(found_index, selection_update);
+        auto new_index = step_down(cursor_index());
+        if (new_index.is_valid())
+            set_cursor(new_index, selection_update);
         return;
     }
-
-    case CursorMovement::Home:
-        // FIXME: Implement.
-        break;
-
-    case CursorMovement::End:
-        // FIXME: Implement.
-        break;
-
-    case CursorMovement::PageUp:
-        // FIXME: Implement.
-        break;
-
-    case CursorMovement::PageDown:
-        // FIXME: Implement.
-        break;
-
+    case CursorMovement::Home: {
+        ModelIndex first_index = model.index(0, model.tree_column(), ModelIndex());
+        if (first_index.is_valid())
+            set_cursor(first_index, selection_update);
+        return;
+    }
+    case CursorMovement::End: {
+        auto last_index = find_last_index_in_tree({});
+        if (last_index.is_valid())
+            set_cursor(last_index, selection_update);
+        return;
+    }
+    case CursorMovement::PageUp: {
+        const int items_per_page = visible_content_rect().height() / row_height();
+        auto new_index = cursor_index();
+        for (int step = 0; step < items_per_page; ++step)
+            new_index = step_up(new_index);
+        if (new_index.is_valid())
+            set_cursor(new_index, selection_update);
+        return;
+    }
+    case CursorMovement::PageDown: {
+        const int items_per_page = visible_content_rect().height() / row_height();
+        auto new_index = cursor_index();
+        for (int step = 0; step < items_per_page; ++step)
+            new_index = step_down(new_index);
+        if (new_index.is_valid())
+            set_cursor(new_index, selection_update);
+        return;
+    }
     case CursorMovement::Left:
     case CursorMovement::Right:
         // There is no left/right in a treeview, those keys expand/collapse items instead.

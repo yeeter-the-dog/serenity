@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2021, Cesar Torres <shortanemoia@protonmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "SoundPlayerWidgetAdvancedView.h"
@@ -38,8 +18,8 @@
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Slider.h>
 #include <LibGUI/Splitter.h>
-#include <LibGUI/ToolBar.h>
-#include <LibGUI/ToolBarContainer.h>
+#include <LibGUI/Toolbar.h>
+#include <LibGUI/ToolbarContainer.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
 
@@ -55,7 +35,7 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
     set_layout<GUI::VerticalBoxLayout>();
     m_splitter = add<GUI::HorizontalSplitter>();
     m_player_view = m_splitter->add<GUI::Widget>();
-    m_playlist_model = adopt(*new PlaylistModel());
+    m_playlist_model = adopt_ref(*new PlaylistModel());
 
     m_player_view->set_layout<GUI::VerticalBoxLayout>();
 
@@ -67,16 +47,22 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
 
     m_visualization = m_player_view->add<BarsVisualizationWidget>();
 
+    // Set a temporary value for total samples.
+    // This value will be set properly when we load a new file.
+    const int total_samples = this->manager().total_length() * 44100;
+
     m_playback_progress_slider = m_player_view->add<AutoSlider>(Orientation::Horizontal);
     m_playback_progress_slider->set_fixed_height(20);
+    m_playback_progress_slider->set_jump_to_cursor(true);
     m_playback_progress_slider->set_min(0);
-    m_playback_progress_slider->set_max(this->manager().total_length() * 44100); //this value should be set when we load a new file
+    m_playback_progress_slider->set_max(total_samples);
+    m_playback_progress_slider->set_page_step(total_samples / 10);
     m_playback_progress_slider->on_knob_released = [&](int value) {
         this->manager().seek(value);
     };
 
-    auto& toolbar_container = m_player_view->add<GUI::ToolBarContainer>();
-    auto& menubar = toolbar_container.add<GUI::ToolBar>();
+    auto& toolbar_container = m_player_view->add<GUI::ToolbarContainer>();
+    auto& menubar = toolbar_container.add<GUI::Toolbar>();
 
     m_play_button = menubar.add<GUI::Button>();
     m_play_button->set_icon(is_paused() ? (!has_loaded_file() ? *m_play_icon : *m_pause_icon) : *m_pause_icon);
@@ -86,6 +72,7 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
         bool paused = this->manager().toggle_pause();
         set_paused(paused);
         m_play_button->set_icon(paused ? *m_play_icon : *m_pause_icon);
+        m_stop_button->set_enabled(has_loaded_file());
     };
 
     m_stop_button = menubar.add<GUI::Button>();
@@ -159,7 +146,9 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
         int samples_played = client_connection().get_played_samples() + this->manager().last_seek();
         int current_second = samples_played / 44100;
         timestamp_label.set_text(String::formatted("Elapsed: {:02}:{:02}:{:02}", current_second / 3600, current_second / 60, current_second % 60));
-        m_playback_progress_slider->set_value(samples_played);
+        if (!m_playback_progress_slider->mouse_is_down()) {
+            m_playback_progress_slider->set_value(samples_played);
+        }
 
         dynamic_cast<Visualization*>(m_visualization.ptr())->set_buffer(this->manager().current_buffer());
         dynamic_cast<Visualization*>(m_visualization.ptr())->set_samplerate(loaded_file_samplerate());
@@ -209,13 +198,13 @@ void SoundPlayerWidgetAdvancedView::open_file(StringView path)
             "Filetype error", GUI::MessageBox::Type::Error);
         return;
     }
-    m_window.set_title(String::formatted("{} - SoundPlayer", loader->file()->filename()));
+    m_window.set_title(String::formatted("{} - Sound Player", loader->file()->filename()));
     m_playback_progress_slider->set_max(loader->total_samples());
+    m_playback_progress_slider->set_page_step(loader->total_samples() / 10);
     m_playback_progress_slider->set_enabled(true);
     m_play_button->set_enabled(true);
     m_play_button->set_icon(*m_pause_icon);
     m_stop_button->set_enabled(true);
-    m_playback_progress_slider->set_max(loader->total_samples());
     manager().set_loader(move(loader));
     set_has_loaded_file(true);
     set_loaded_file_samplerate(loader->sample_rate());

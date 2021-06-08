@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Emanuel Sprung <emanuel.sprung@gmail.com>
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "RegexParser.h"
@@ -68,7 +48,7 @@ ALWAYS_INLINE Token Parser::consume(TokenType type, Error error)
 {
     if (m_parser_state.current_token.type() != type) {
         set_error(error);
-        dbgln("[PARSER] Error: Unexpected token {}. Expected: {}", m_parser_state.current_token.name(), Token::name(type));
+        dbgln_if(REGEX_DEBUG, "[PARSER] Error: Unexpected token {}. Expected: {}", m_parser_state.current_token.name(), Token::name(type));
     }
     return consume();
 }
@@ -168,9 +148,7 @@ Parser::Result Parser::parse(Optional<AllOptions> regex_options)
     else
         set_error(Error::InvalidPattern);
 
-#if REGEX_DEBUG
-    fprintf(stderr, "[PARSER] Produced bytecode with %lu entries (opcodes + arguments)\n", m_parser_state.bytecode.size());
-#endif
+    dbgln_if(REGEX_DEBUG, "[PARSER] Produced bytecode with {} entries (opcodes + arguments)", m_parser_state.bytecode.size());
     return {
         move(m_parser_state.bytecode),
         move(m_parser_state.capture_groups_count),
@@ -481,9 +459,7 @@ ALWAYS_INLINE bool PosixExtendedParser::parse_sub_expression(ByteCode& stack, si
         if (match(TokenType::EscapeSequence)) {
             length = 1;
             Token t = consume();
-#if REGEX_DEBUG
-            printf("[PARSER] EscapeSequence with substring %s\n", String(t.value()).characters());
-#endif
+            dbgln_if(REGEX_DEBUG, "[PARSER] EscapeSequence with substring {}", t.value());
 
             bytecode.insert_bytecode_compare_values({ { CharacterCompareType::Char, (u32)t.value().characters_without_null_termination()[1] } });
             should_parse_repetition_symbol = true;
@@ -868,40 +844,26 @@ bool ECMA262Parser::parse_quantifiable_assertion(ByteCode& stack, size_t&, bool 
     return false;
 }
 
-StringView ECMA262Parser::read_digits_as_string(ReadDigitsInitialZeroState initial_zero, ReadDigitFollowPolicy follow_policy, bool hex, int max_count)
+StringView ECMA262Parser::read_digits_as_string(ReadDigitsInitialZeroState initial_zero, bool hex, int max_count)
 {
     if (!match(TokenType::Char))
         return {};
 
-    if (initial_zero != ReadDigitsInitialZeroState::Allow) {
-        auto has_initial_zero = m_parser_state.current_token.value() == "0";
-        if (initial_zero == ReadDigitsInitialZeroState::Disallow && has_initial_zero)
-            return {};
-
-        if (initial_zero == ReadDigitsInitialZeroState::Require && !has_initial_zero)
-            return {};
-    }
+    if (initial_zero == ReadDigitsInitialZeroState::Disallow && m_parser_state.current_token.value() == "0")
+        return {};
 
     int count = 0;
     size_t offset = 0;
     auto start_token = m_parser_state.current_token;
     while (match(TokenType::Char)) {
-        auto c = m_parser_state.current_token.value();
-        if (follow_policy == ReadDigitFollowPolicy::DisallowDigit) {
-            if (hex && AK::StringUtils::convert_to_uint_from_hex(c).has_value())
-                break;
-            if (!hex && c.to_uint().has_value())
-                break;
-        }
-
-        if (follow_policy == ReadDigitFollowPolicy::DisallowNonDigit) {
-            if (hex && !AK::StringUtils::convert_to_uint_from_hex(c).has_value())
-                break;
-            if (!hex && !c.to_uint().has_value())
-                break;
-        }
+        auto& c = m_parser_state.current_token.value();
 
         if (max_count > 0 && count >= max_count)
+            break;
+
+        if (hex && !AK::StringUtils::convert_to_uint_from_hex(c).has_value())
+            break;
+        if (!hex && !c.to_uint().has_value())
             break;
 
         offset += consume().value().length();
@@ -911,9 +873,9 @@ StringView ECMA262Parser::read_digits_as_string(ReadDigitsInitialZeroState initi
     return StringView { start_token.value().characters_without_null_termination(), offset };
 }
 
-Optional<unsigned> ECMA262Parser::read_digits(ECMA262Parser::ReadDigitsInitialZeroState initial_zero, ECMA262Parser::ReadDigitFollowPolicy follow_policy, bool hex, int max_count)
+Optional<unsigned> ECMA262Parser::read_digits(ECMA262Parser::ReadDigitsInitialZeroState initial_zero, bool hex, int max_count)
 {
-    auto str = read_digits_as_string(initial_zero, follow_policy, hex, max_count);
+    auto str = read_digits_as_string(initial_zero, hex, max_count);
     if (str.is_empty())
         return {};
     if (hex)
@@ -945,31 +907,41 @@ bool ECMA262Parser::parse_quantifier(ByteCode& stack, size_t& match_length_minim
         repetition_mark = Repetition::Optional;
     } else if (match(TokenType::LeftCurly)) {
         consume();
+        auto chars_consumed = 1;
         repetition_mark = Repetition::Explicit;
 
-        auto low_bound = read_digits();
+        auto low_bound_string = read_digits_as_string();
+        chars_consumed += low_bound_string.length();
+
+        auto low_bound = low_bound_string.to_uint();
 
         if (!low_bound.has_value()) {
-            set_error(Error::InvalidBraceContent);
-            return false;
+            back(chars_consumed + 1);
+            return true;
         }
 
         repeat_min = low_bound.value();
 
         if (match(TokenType::Comma)) {
             consume();
-            auto high_bound = read_digits();
-            if (high_bound.has_value())
+            ++chars_consumed;
+            auto high_bound_string = read_digits_as_string();
+            auto high_bound = high_bound_string.to_uint();
+            if (high_bound.has_value()) {
                 repeat_max = high_bound.value();
+                chars_consumed += high_bound_string.length();
+            }
         } else {
             repeat_max = repeat_min;
         }
 
         if (!match(TokenType::RightCurly)) {
-            set_error(Error::MismatchingBrace);
-            return false;
+            back(chars_consumed + 1);
+            return true;
         }
+
         consume();
+        ++chars_consumed;
 
         if (repeat_max.has_value()) {
             if (repeat_min.value() > repeat_max.value())
@@ -980,10 +952,6 @@ bool ECMA262Parser::parse_quantifier(ByteCode& stack, size_t& match_length_minim
     }
 
     if (match(TokenType::Questionmark)) {
-        if (repetition_mark == Repetition::Explicit) {
-            set_error(Error::InvalidRepetitionMarker);
-            return false;
-        }
         consume();
         ungreedy = true;
     }
@@ -1002,7 +970,7 @@ bool ECMA262Parser::parse_quantifier(ByteCode& stack, size_t& match_length_minim
         match_length_minimum = 0;
         break;
     case Repetition::Explicit:
-        new_bytecode.insert_bytecode_repetition_min_max(stack, repeat_min.value(), repeat_max);
+        new_bytecode.insert_bytecode_repetition_min_max(stack, repeat_min.value(), repeat_max, !ungreedy);
         match_length_minimum *= repeat_min.value();
         break;
     case Repetition::None:
@@ -1117,7 +1085,7 @@ bool ECMA262Parser::parse_invalid_braced_quantifier()
 
 bool ECMA262Parser::parse_atom_escape(ByteCode& stack, size_t& match_length_minimum, bool unicode, bool named)
 {
-    if (auto escape_str = read_digits_as_string(ReadDigitsInitialZeroState::Disallow, ReadDigitFollowPolicy::DisallowNonDigit); !escape_str.is_empty()) {
+    if (auto escape_str = read_digits_as_string(ReadDigitsInitialZeroState::Disallow); !escape_str.is_empty()) {
         if (auto escape = escape_str.to_uint(); escape.has_value()) {
             // See if this is a "back"-reference (we've already parsed the group it refers to)
             auto maybe_length = m_parser_state.capture_group_minimum_lengths.get(escape.value());
@@ -1213,7 +1181,7 @@ bool ECMA262Parser::parse_atom_escape(ByteCode& stack, size_t& match_length_mini
     }
 
     // '\0'
-    if (read_digits(ReadDigitsInitialZeroState::Require, ReadDigitFollowPolicy::DisallowDigit).has_value()) {
+    if (try_skip("0")) {
         match_length_minimum += 1;
         stack.insert_bytecode_compare_values({ { CharacterCompareType::Char, (ByteCodeValueType)0 } });
         return true;
@@ -1221,7 +1189,7 @@ bool ECMA262Parser::parse_atom_escape(ByteCode& stack, size_t& match_length_mini
 
     // HexEscape
     if (try_skip("x")) {
-        if (auto hex_escape = read_digits(ReadDigitsInitialZeroState::Allow, ReadDigitFollowPolicy::Any, true, 2); hex_escape.has_value()) {
+        if (auto hex_escape = read_digits(ReadDigitsInitialZeroState::Allow, true, 2); hex_escape.has_value()) {
             match_length_minimum += 1;
             stack.insert_bytecode_compare_values({ { CharacterCompareType::Char, (ByteCodeValueType)hex_escape.value() } });
             return true;
@@ -1237,7 +1205,7 @@ bool ECMA262Parser::parse_atom_escape(ByteCode& stack, size_t& match_length_mini
     }
 
     if (try_skip("u")) {
-        if (auto code_point = read_digits(ReadDigitsInitialZeroState::Allow, ReadDigitFollowPolicy::Any, true, 4); code_point.has_value()) {
+        if (auto code_point = read_digits(ReadDigitsInitialZeroState::Allow, true, 4); code_point.has_value()) {
             // FIXME: The minimum length depends on the mode - should be utf8-length in u8 mode.
             match_length_minimum += 1;
             StringBuilder builder;
@@ -1426,6 +1394,9 @@ bool ECMA262Parser::parse_character_class(ByteCode& stack, size_t& match_length_
 
     if (match(TokenType::RightBracket)) {
         consume();
+        // Should only have at most an 'Inverse'
+        VERIFY(compares.size() <= 1);
+        stack.insert_bytecode_compare_values(move(compares));
         return true;
     }
 
@@ -1452,7 +1423,7 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
     auto read_class_atom_no_dash = [&]() -> Optional<CharClassRangeElement> {
         if (match(TokenType::EscapeSequence)) {
             auto token = consume().value();
-            return { { .code_point = (u32)token[1], .is_character_class = false } };
+            return { CharClassRangeElement { .code_point = (u32)token[1], .is_character_class = false } };
         }
 
         if (try_skip("\\")) {
@@ -1462,50 +1433,50 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
             }
 
             if (try_skip("f"))
-                return { { .code_point = '\f', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\f', .is_character_class = false } };
             if (try_skip("n"))
-                return { { .code_point = '\n', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\n', .is_character_class = false } };
             if (try_skip("r"))
-                return { { .code_point = '\r', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\r', .is_character_class = false } };
             if (try_skip("t"))
-                return { { .code_point = '\t', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\t', .is_character_class = false } };
             if (try_skip("v"))
-                return { { .code_point = '\v', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\v', .is_character_class = false } };
             if (try_skip("b"))
-                return { { .code_point = '\b', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '\b', .is_character_class = false } };
             if (try_skip("/"))
-                return { { .code_point = '/', .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = '/', .is_character_class = false } };
 
             // CharacterEscape > ControlLetter
             if (try_skip("c")) {
                 for (auto c = 'A'; c <= 'z'; ++c) {
                     if (try_skip({ &c, 1 }))
-                        return { { .code_point = (u32)(c % 32), .is_character_class = false } };
+                        return { CharClassRangeElement { .code_point = (u32)(c % 32), .is_character_class = false } };
                 }
                 if (m_should_use_browser_extended_grammar) {
                     for (auto c = '0'; c <= '9'; ++c) {
                         if (try_skip({ &c, 1 }))
-                            return { { .code_point = (u32)(c % 32), .is_character_class = false } };
+                            return { CharClassRangeElement { .code_point = (u32)(c % 32), .is_character_class = false } };
                     }
                     if (try_skip("_"))
-                        return { { .code_point = (u32)('_' % 32), .is_character_class = false } };
+                        return { CharClassRangeElement { .code_point = (u32)('_' % 32), .is_character_class = false } };
 
                     back(2);
-                    return { { .code_point = '\\', .is_character_class = false } };
+                    return { CharClassRangeElement { .code_point = '\\', .is_character_class = false } };
                 }
             }
 
             // '\0'
-            if (read_digits(ReadDigitsInitialZeroState::Require, ReadDigitFollowPolicy::DisallowDigit).has_value())
-                return { { .code_point = 0, .is_character_class = false } };
+            if (try_skip("0"))
+                return { CharClassRangeElement { .code_point = 0, .is_character_class = false } };
 
             // HexEscape
             if (try_skip("x")) {
-                if (auto hex_escape = read_digits(ReadDigitsInitialZeroState::Allow, ReadDigitFollowPolicy::Any, true, 2); hex_escape.has_value()) {
-                    return { { .code_point = hex_escape.value(), .is_character_class = false } };
+                if (auto hex_escape = read_digits(ReadDigitsInitialZeroState::Allow, true, 2); hex_escape.has_value()) {
+                    return { CharClassRangeElement { .code_point = hex_escape.value(), .is_character_class = false } };
                 } else if (!unicode) {
                     // '\x' is allowed in non-unicode mode, just matches 'x'.
-                    return { { .code_point = 'x', .is_character_class = false } };
+                    return { CharClassRangeElement { .code_point = 'x', .is_character_class = false } };
                 } else {
                     set_error(Error::InvalidPattern);
                     return {};
@@ -1513,12 +1484,12 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
             }
 
             if (try_skip("u")) {
-                if (auto code_point = read_digits(ReadDigitsInitialZeroState::Allow, ReadDigitFollowPolicy::Any, true, 4); code_point.has_value()) {
-                    // FIXME: While codepoint ranges are supported, codepoint matches as "Char" are not!
-                    return { { .code_point = code_point.value(), .is_character_class = false } };
+                if (auto code_point = read_digits(ReadDigitsInitialZeroState::Allow, true, 4); code_point.has_value()) {
+                    // FIXME: While code point ranges are supported, code point matches as "Char" are not!
+                    return { CharClassRangeElement { .code_point = code_point.value(), .is_character_class = false } };
                 } else if (!unicode) {
                     // '\u' is allowed in non-unicode mode, just matches 'u'.
-                    return { { .code_point = 'u', .is_character_class = false } };
+                    return { CharClassRangeElement { .code_point = 'u', .is_character_class = false } };
                 } else {
                     set_error(Error::InvalidPattern);
                     return {};
@@ -1527,7 +1498,7 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
 
             if (unicode) {
                 if (try_skip("-"))
-                    return { { .code_point = '-', .is_character_class = false } };
+                    return { CharClassRangeElement { .code_point = '-', .is_character_class = false } };
             }
 
             if (try_skip("p{") || try_skip("P{")) {
@@ -1536,21 +1507,21 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
             }
 
             if (try_skip("d"))
-                return { { .character_class = CharClass::Digit, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Digit, .is_character_class = true } };
             if (try_skip("s"))
-                return { { .character_class = CharClass::Space, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Space, .is_character_class = true } };
             if (try_skip("w"))
-                return { { .character_class = CharClass::Word, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Word, .is_character_class = true } };
             if (try_skip("D"))
-                return { { .character_class = CharClass::Digit, .is_negated = true, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Digit, .is_negated = true, .is_character_class = true } };
             if (try_skip("S"))
-                return { { .character_class = CharClass::Space, .is_negated = true, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Space, .is_negated = true, .is_character_class = true } };
             if (try_skip("W"))
-                return { { .character_class = CharClass::Word, .is_negated = true, .is_character_class = true } };
+                return { CharClassRangeElement { .character_class = CharClass::Word, .is_negated = true, .is_character_class = true } };
 
             if (!unicode) {
                 // Any unrecognised escape is allowed in non-unicode mode.
-                return { { .code_point = (u32)skip(), .is_character_class = false } };
+                return { CharClassRangeElement { .code_point = (u32)skip(), .is_character_class = false } };
             }
         }
 
@@ -1558,12 +1529,12 @@ bool ECMA262Parser::parse_nonempty_class_ranges(Vector<CompareTypeAndValuePair>&
             return {};
 
         // Allow any (other) SourceCharacter.
-        return { { .code_point = (u32)skip(), .is_character_class = false } };
+        return { CharClassRangeElement { .code_point = (u32)skip(), .is_character_class = false } };
     };
     auto read_class_atom = [&]() -> Optional<CharClassRangeElement> {
         if (match(TokenType::HyphenMinus)) {
             consume();
-            return { { .code_point = '-', .is_character_class = false } };
+            return { CharClassRangeElement { .code_point = '-', .is_character_class = false } };
         }
 
         return read_class_atom_no_dash();

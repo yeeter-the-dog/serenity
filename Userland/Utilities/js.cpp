@@ -1,30 +1,11 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/Format.h>
 #include <AK/NonnullOwnPtr.h>
@@ -33,6 +14,9 @@
 #include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
 #include <LibJS/AST.h>
+#include <LibJS/Bytecode/Block.h>
+#include <LibJS/Bytecode/Generator.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Console.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
@@ -68,9 +52,9 @@ class ReplObject final : public JS::GlobalObject {
     JS_OBJECT(ReplObject, JS::GlobalObject);
 
 public:
-    ReplObject();
+    ReplObject() = default;
     virtual void initialize_global_object() override;
-    virtual ~ReplObject() override;
+    virtual ~ReplObject() override = default;
 
 private:
     JS_DECLARE_NATIVE_FUNCTION(exit_interpreter);
@@ -79,7 +63,21 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(save_to_file);
 };
 
+class ScriptObject final : public JS::GlobalObject {
+    JS_OBJECT(ScriptObject, JS::GlobalObject);
+
+public:
+    ScriptObject() = default;
+    virtual void initialize_global_object() override;
+    virtual ~ScriptObject() override = default;
+
+private:
+    JS_DECLARE_NATIVE_FUNCTION(load_file);
+};
+
 static bool s_dump_ast = false;
+static bool s_dump_bytecode = false;
+static bool s_run_bytecode = false;
 static bool s_print_last_result = false;
 static RefPtr<Line::Editor> s_editor;
 static String s_history_path = String::formatted("{}/.js-history", Core::StandardPaths::home_directory());
@@ -240,18 +238,25 @@ static void print_function(const JS::Object& object, HashTable<JS::Object*>&)
         out(" {}", static_cast<const JS::NativeFunction&>(object).name());
 }
 
-static void print_date(const JS::Object& date, HashTable<JS::Object*>&)
+static void print_date(const JS::Object& object, HashTable<JS::Object*>&)
 {
     print_type("Date");
-    out(" \033[34;1m{}\033[0m", static_cast<const JS::Date&>(date).string());
+    out(" \033[34;1m{}\033[0m", static_cast<const JS::Date&>(object).string());
 }
 
-static void print_error(const JS::Object& object, HashTable<JS::Object*>&)
+static void print_error(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
 {
-    auto& error = static_cast<const JS::Error&>(object);
-    print_type(error.name());
-    if (!error.message().is_empty())
-        out(" \033[31;1m{}\033[0m", error.message());
+    auto name = object.get_without_side_effects(vm->names.name).value_or(JS::js_undefined());
+    auto message = object.get_without_side_effects(vm->names.message).value_or(JS::js_undefined());
+    if (name.is_accessor() || name.is_native_property() || message.is_accessor() || message.is_native_property()) {
+        print_value(&object, seen_objects);
+    } else {
+        auto name_string = name.to_string_without_side_effects();
+        auto message_string = message.to_string_without_side_effects();
+        print_type(name_string);
+        if (!message_string.is_empty())
+            out(" \033[31;1m{}\033[0m", message_string);
+    }
 }
 
 static void print_regexp_object(const JS::Object& object, HashTable<JS::Object*>&)
@@ -307,6 +312,8 @@ static void print_array_buffer(const JS::Object& object, HashTable<JS::Object*>&
     print_type("ArrayBuffer");
     out("\n  byteLength: ");
     print_value(JS::Value((double)byte_length), seen_objects);
+    if (!byte_length)
+        return;
     outln();
     for (size_t i = 0; i < byte_length; ++i) {
         out("{:02x}", buffer[i]);
@@ -380,11 +387,10 @@ static void print_value(JS::Value value, HashTable<JS::Object*>& seen_objects)
         seen_objects.set(&value.as_object());
     }
 
-    if (value.is_array())
-        return print_array(static_cast<JS::Array&>(value.as_object()), seen_objects);
-
     if (value.is_object()) {
         auto& object = value.as_object();
+        if (object.is_array())
+            return print_array(static_cast<JS::Array&>(object), seen_objects);
         if (object.is_function())
             return print_function(object, seen_objects);
         if (is<JS::Date>(object))
@@ -437,14 +443,14 @@ static void print(JS::Value value)
     outln();
 }
 
-static bool file_has_shebang(ByteBuffer file_contents)
+static bool file_has_shebang(ByteBuffer const& file_contents)
 {
     if (file_contents.size() >= 2 && file_contents[0] == '#' && file_contents[1] == '!')
         return true;
     return false;
 }
 
-static StringView strip_shebang(ByteBuffer file_contents)
+static StringView strip_shebang(ByteBuffer const& file_contents)
 {
     size_t i = 0;
     for (i = 2; i < file_contents.size(); ++i) {
@@ -488,6 +494,21 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
     if (s_dump_ast)
         program->dump(0);
 
+    if (s_dump_bytecode || s_run_bytecode) {
+        auto block = JS::Bytecode::Generator::generate(*program);
+        VERIFY(block);
+
+        if (s_dump_bytecode)
+            block->dump();
+
+        if (s_run_bytecode) {
+            JS::Bytecode::Interpreter bytecode_interpreter(interpreter.global_object());
+            bytecode_interpreter.run(*block);
+        }
+
+        return true;
+    }
+
     if (parser.has_errors()) {
         auto error = parser.errors()[0];
         auto hint = error.source_location_hint(source);
@@ -499,31 +520,35 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
     }
 
     auto handle_exception = [&] {
+        auto* exception = vm->exception();
+        vm->clear_exception();
         out("Uncaught exception: ");
-        print(vm->exception()->value());
-        auto trace = vm->exception()->trace();
-        if (trace.size() > 1) {
+        print(exception->value());
+        auto& traceback = exception->traceback();
+        if (traceback.size() > 1) {
             unsigned repetitions = 0;
-            for (size_t i = 0; i < trace.size(); ++i) {
-                auto& function_name = trace[i];
-                if (i + 1 < trace.size() && trace[i + 1] == function_name) {
-                    repetitions++;
-                    continue;
+            for (size_t i = 0; i < traceback.size(); ++i) {
+                auto& traceback_frame = traceback[i];
+                if (i + 1 < traceback.size()) {
+                    auto& next_traceback_frame = traceback[i + 1];
+                    if (next_traceback_frame.function_name == traceback_frame.function_name) {
+                        repetitions++;
+                        continue;
+                    }
                 }
                 if (repetitions > 4) {
                     // If more than 5 (1 + >4) consecutive function calls with the same name, print
                     // the name only once and show the number of repetitions instead. This prevents
                     // printing ridiculously large call stacks of recursive functions.
-                    outln(" -> {}", function_name);
+                    outln(" -> {}", traceback_frame.function_name);
                     outln(" {} more calls", repetitions);
                 } else {
                     for (size_t j = 0; j < repetitions + 1; ++j)
-                        outln(" -> {}", function_name);
+                        outln(" -> {}", traceback_frame.function_name);
                 }
                 repetitions = 0;
             }
         }
-        vm->clear_exception();
     };
 
     if (vm->exception()) {
@@ -533,14 +558,36 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
     if (s_print_last_result)
         print(vm->last_value());
     if (vm->exception()) {
-        return false;
         handle_exception();
+        return false;
     }
     return true;
 }
 
-ReplObject::ReplObject()
+static JS::Value load_file_impl(JS::VM& vm, JS::GlobalObject& global_object)
 {
+    auto filename = vm.argument(0).to_string(global_object);
+    if (vm.exception())
+        return {};
+    auto file = Core::File::construct(filename);
+    if (!file->open(Core::OpenMode::ReadOnly)) {
+        vm.throw_exception<JS::Error>(global_object, String::formatted("Failed to open '{}': {}", filename, file->error_string()));
+        return {};
+    }
+    auto file_contents = file->read_all();
+    auto source = file_has_shebang(file_contents)
+        ? strip_shebang(file_contents)
+        : StringView { file_contents };
+    auto parser = JS::Parser(JS::Lexer(source));
+    auto program = parser.parse_program();
+    if (parser.has_errors()) {
+        auto& error = parser.errors()[0];
+        vm.throw_exception<JS::SyntaxError>(global_object, error.to_string());
+        return {};
+    }
+    // FIXME: Use eval()-like semantics and execute in current scope?
+    vm.interpreter().run(global_object, *program);
+    return JS::js_undefined();
 }
 
 void ReplObject::initialize_global_object()
@@ -551,10 +598,6 @@ void ReplObject::initialize_global_object()
     define_native_function("help", repl_help);
     define_native_function("load", load_file, 1);
     define_native_function("save", save_to_file, 1);
-}
-
-ReplObject::~ReplObject()
-{
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ReplObject::save_to_file)
@@ -584,34 +627,26 @@ JS_DEFINE_NATIVE_FUNCTION(ReplObject::repl_help)
     outln("REPL commands:");
     outln("    exit(code): exit the REPL with specified code. Defaults to 0.");
     outln("    help(): display this menu");
-    outln("    load(files): accepts file names as params to load into running session. For example load(\"js/1.js\", \"js/2.js\", \"js/3.js\")");
-    outln("    save(file): accepts a file name, writes REPL input history to a file. For example: save(\"foo.txt\")");
+    outln("    load(file): load given JS file into running session. For example: load(\"foo.js\")");
+    outln("    save(file): write REPL input history to the given file. For example: save(\"foo.txt\")");
     return JS::js_undefined();
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ReplObject::load_file)
 {
-    if (!vm.argument_count())
-        return JS::Value(false);
+    return load_file_impl(vm, global_object);
+}
 
-    for (auto& file : vm.call_frame().arguments) {
-        String file_name = file.as_string().string();
-        auto js_file = Core::File::construct(file_name);
-        if (!js_file->open(Core::IODevice::ReadOnly)) {
-            warnln("Failed to open {}: {}", file_name, js_file->error_string());
-            continue;
-        }
-        auto file_contents = js_file->read_all();
+void ScriptObject::initialize_global_object()
+{
+    Base::initialize_global_object();
+    define_property("global", this, JS::Attribute::Enumerable);
+    define_native_function("load", load_file, 1);
+}
 
-        StringView source;
-        if (file_has_shebang(file_contents)) {
-            source = strip_shebang(file_contents);
-        } else {
-            source = file_contents;
-        }
-        parse_and_run(vm.interpreter(), source);
-    }
-    return JS::Value(true);
+JS_DEFINE_NATIVE_FUNCTION(ScriptObject::load_file)
+{
+    return load_file_impl(vm, global_object);
 }
 
 static void repl(JS::Interpreter& interpreter)
@@ -643,32 +678,38 @@ public:
         outln("{}", vm().join_arguments());
         return JS::js_undefined();
     }
+
     virtual JS::Value info() override
     {
         outln("(i) {}", vm().join_arguments());
         return JS::js_undefined();
     }
+
     virtual JS::Value debug() override
     {
         outln("\033[36;1m{}\033[0m", vm().join_arguments());
         return JS::js_undefined();
     }
+
     virtual JS::Value warn() override
     {
         outln("\033[33;1m{}\033[0m", vm().join_arguments());
         return JS::js_undefined();
     }
+
     virtual JS::Value error() override
     {
         outln("\033[31;1m{}\033[0m", vm().join_arguments());
         return JS::js_undefined();
     }
+
     virtual JS::Value clear() override
     {
         out("\033[3J\033[H\033[2J");
         fflush(stdout);
         return JS::js_undefined();
     }
+
     virtual JS::Value trace() override
     {
         outln("{}", vm().join_arguments());
@@ -680,6 +721,7 @@ public:
         }
         return JS::js_undefined();
     }
+
     virtual JS::Value count() override
     {
         auto label = vm().argument_count() ? vm().argument(0).to_string_without_side_effects() : "default";
@@ -687,6 +729,7 @@ public:
         outln("{}: {}", label, counter_value);
         return JS::js_undefined();
     }
+
     virtual JS::Value count_reset() override
     {
         auto label = vm().argument_count() ? vm().argument(0).to_string_without_side_effects() : "default";
@@ -694,6 +737,20 @@ public:
             outln("{}: 0", label);
         else
             outln("\033[33;1m\"{}\" doesn't have a count\033[0m", label);
+        return JS::js_undefined();
+    }
+
+    virtual JS::Value assert_() override
+    {
+        auto& vm = this->vm();
+        if (!vm.argument(0).to_boolean()) {
+            if (vm.argument_count() > 1) {
+                out("\033[31;1mAssertion failed:\033[0m");
+                outln(" {}", vm.join_arguments(1));
+            } else {
+                outln("\033[31;1mAssertion failed\033[0m");
+            }
+        }
         return JS::js_undefined();
     }
 };
@@ -707,6 +764,8 @@ int main(int argc, char** argv)
     Core::ArgsParser args_parser;
     args_parser.set_general_help("This is a JavaScript interpreter.");
     args_parser.add_option(s_dump_ast, "Dump the AST", "dump-ast", 'A');
+    args_parser.add_option(s_dump_bytecode, "Dump the bytecode", "dump-bytecode", 'd');
+    args_parser.add_option(s_run_bytecode, "Run the bytecode", "run-bytecode", 'b');
     args_parser.add_option(s_print_last_result, "Print last result", "print-last-result", 'l');
     args_parser.add_option(gc_on_every_allocation, "GC on every allocation", "gc-on-every-allocation", 'g');
     args_parser.add_option(disable_syntax_highlight, "Disable live syntax highlighting", "no-syntax-highlight", 's');
@@ -739,7 +798,7 @@ int main(int argc, char** argv)
     OwnPtr<JS::Interpreter> interpreter;
 
     interrupt_interpreter = [&] {
-        auto error = JS::Error::create(interpreter->global_object(), "Error", "Received SIGINT");
+        auto error = JS::Error::create(interpreter->global_object(), "Received SIGINT");
         vm->throw_exception(interpreter->global_object(), error);
     };
 
@@ -947,7 +1006,7 @@ int main(int argc, char** argv)
         repl(*interpreter);
         s_editor->save_history(s_history_path);
     } else {
-        interpreter = JS::Interpreter::create<JS::GlobalObject>(*vm);
+        interpreter = JS::Interpreter::create<ScriptObject>(*vm);
         ReplConsoleClient console_client(interpreter->global_object().console());
         interpreter->global_object().console().set_client(console_client);
         interpreter->heap().set_should_collect_on_every_allocation(gc_on_every_allocation);
@@ -957,7 +1016,7 @@ int main(int argc, char** argv)
         });
 
         auto file = Core::File::construct(script_path);
-        if (!file->open(Core::IODevice::ReadOnly)) {
+        if (!file->open(Core::OpenMode::ReadOnly)) {
             warnln("Failed to open {}: {}", script_path, file->error_string());
             return 1;
         }

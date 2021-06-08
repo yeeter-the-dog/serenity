@@ -1,31 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <LibCore/ArgsParser.h>
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip_icmp.h>
@@ -63,7 +45,7 @@ int main(int argc, char** argv)
     }
 
     if (setgid(getgid()) || setuid(getuid())) {
-        fprintf(stderr, "Failed to drop privileges.\n");
+        warnln("Failed to drop privileges.");
         return 1;
     }
 
@@ -84,7 +66,7 @@ int main(int argc, char** argv)
 
     auto* hostent = gethostbyname(host);
     if (!hostent) {
-        printf("Lookup failed for '%s'\n", host);
+        warnln("Lookup failed for '{}'", host);
         return 1;
     }
 
@@ -119,17 +101,18 @@ int main(int argc, char** argv)
     sighandler_t ret = signal(SIGINT, [](int) {
         int packet_loss = 100;
 
-        printf("\n--- %s ping statistics ---\n", host);
+        outln();
+        outln("--- {} ping statistics ---", host);
 
         if (total_pings)
             packet_loss -= 100.0f * successful_pings / total_pings;
-        printf("%d packets transmitted, %d received, %d%% packet loss\n",
+        outln("{} packets transmitted, {} received, {}% packet loss",
             total_pings, successful_pings, packet_loss);
 
         int average_ms = 0;
         if (successful_pings)
             average_ms = total_ms / successful_pings;
-        printf("rtt min/avg/max = %d/%d/%d ms\n", min_ms, average_ms, max_ms);
+        outln("rtt min/avg/max = {}/{}/{} ms", min_ms, average_ms, max_ms);
 
         exit(0);
     });
@@ -171,7 +154,7 @@ int main(int argc, char** argv)
             rc = recvfrom(fd, &pong_packet, sizeof(PongPacket), 0, (struct sockaddr*)&peer_address, &peer_address_size);
             if (rc < 0) {
                 if (errno == EAGAIN) {
-                    printf("Request (seq=%u) timed out.\n", ntohs(ping_packet.header.un.echo.sequence));
+                    outln("Request (seq={}) timed out.", ntohs(ping_packet.header.un.echo.sequence));
                     break;
                 }
                 perror("recvfrom");
@@ -208,7 +191,7 @@ int main(int argc, char** argv)
                 max_ms = ms;
 
             char addr_buf[INET_ADDRSTRLEN];
-            printf("Pong from %s: id=%u, seq=%u%s, time=%dms\n",
+            outln("Pong from {}: id={}, seq={}{}, time={}ms",
                 inet_ntop(AF_INET, &peer_address.sin_addr, addr_buf, sizeof(addr_buf)),
                 ntohs(pong_packet.header.un.echo.id),
                 ntohs(pong_packet.header.un.echo.sequence),

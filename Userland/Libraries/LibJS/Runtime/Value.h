@@ -1,27 +1,8 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -37,8 +18,6 @@
 
 // 2 ** 53 - 1
 static constexpr double MAX_ARRAY_LIKE_INDEX = 9007199254740991.0;
-// 2 ** 32 - 1
-static constexpr double MAX_U32 = 4294967295.0;
 // Unique bit representation of negative zero (only sign bit set)
 static constexpr u64 NEGATIVE_ZERO_BITS = ((u64)1 << 63);
 
@@ -80,10 +59,10 @@ public:
     bool is_native_property() const { return m_type == Type::NativeProperty; }
     bool is_nullish() const { return is_null() || is_undefined(); }
     bool is_cell() const { return is_string() || is_accessor() || is_object() || is_bigint() || is_symbol() || is_native_property(); }
-    bool is_array() const;
+    bool is_array(GlobalObject&) const;
     bool is_function() const;
     bool is_constructor() const;
-    bool is_regexp(GlobalObject& global_object) const;
+    bool is_regexp(GlobalObject&) const;
 
     bool is_nan() const { return is_number() && __builtin_isnan(as_double()); }
     bool is_infinity() const { return is_number() && __builtin_isinf(as_double()); }
@@ -244,10 +223,10 @@ public:
         return *m_value.as_symbol;
     }
 
-    Cell* as_cell()
+    Cell& as_cell()
     {
         VERIFY(is_cell());
-        return m_value.as_cell;
+        return *m_value.as_cell;
     }
 
     Accessor& as_accessor()
@@ -282,6 +261,7 @@ public:
     Value to_number(GlobalObject&) const;
     BigInt* to_bigint(GlobalObject&) const;
     double to_double(GlobalObject&) const;
+    StringOrSymbol to_property_key(GlobalObject&) const;
     i32 to_i32(GlobalObject& global_object) const
     {
         if (m_type == Type::Int32)
@@ -349,6 +329,12 @@ inline Value js_negative_infinity()
     return Value(-INFINITY);
 }
 
+inline void Cell::Visitor::visit(Value value)
+{
+    if (value.is_cell())
+        visit_impl(value.as_cell());
+}
+
 Value greater_than(GlobalObject&, Value lhs, Value rhs);
 Value greater_than_equals(GlobalObject&, Value lhs, Value rhs);
 Value less_than(GlobalObject&, Value lhs, Value rhs);
@@ -381,6 +367,7 @@ TriState abstract_relation(GlobalObject&, bool left_first, Value lhs, Value rhs)
 Function* get_method(GlobalObject& global_object, Value, const PropertyName&);
 size_t length_of_array_like(GlobalObject&, const Object&);
 Object* species_constructor(GlobalObject&, const Object&, Object& default_constructor);
+Value require_object_coercible(GlobalObject&, Value);
 
 }
 

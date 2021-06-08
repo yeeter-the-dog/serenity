@@ -1,29 +1,9 @@
 /*
  * Copyright (c) 2019-2020, Jesse Buhagiar <jooster669@gmail.com>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/ByteBuffer.h>
@@ -37,8 +17,8 @@
 #include <Kernel/RTC.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/VM/ProcessPagingScope.h>
+#include <LibC/elf.h>
 #include <LibELF/CoreDump.h>
-#include <LibELF/exec_elf.h>
 
 namespace Kernel {
 
@@ -52,7 +32,7 @@ OwnPtr<CoreDump> CoreDump::create(NonnullRefPtr<Process> process, const String& 
     auto fd = create_target_file(process, output_path);
     if (!fd)
         return {};
-    return adopt_own(*new CoreDump(move(process), fd.release_nonnull()));
+    return adopt_own_if_nonnull(new CoreDump(move(process), fd.release_nonnull()));
 }
 
 CoreDump::CoreDump(NonnullRefPtr<Process> process, NonnullRefPtr<FileDescription>&& fd)
@@ -137,17 +117,17 @@ KResult CoreDump::write_program_headers(size_t notes_size)
 
         phdr.p_type = PT_LOAD;
         phdr.p_offset = offset;
-        phdr.p_vaddr = region.vaddr().get();
+        phdr.p_vaddr = region->vaddr().get();
         phdr.p_paddr = 0;
 
-        phdr.p_filesz = region.page_count() * PAGE_SIZE;
-        phdr.p_memsz = region.page_count() * PAGE_SIZE;
+        phdr.p_filesz = region->page_count() * PAGE_SIZE;
+        phdr.p_memsz = region->page_count() * PAGE_SIZE;
         phdr.p_align = 0;
 
-        phdr.p_flags = region.is_readable() ? PF_R : 0;
-        if (region.is_writable())
+        phdr.p_flags = region->is_readable() ? PF_R : 0;
+        if (region->is_writable())
             phdr.p_flags |= PF_W;
-        if (region.is_executable())
+        if (region->is_executable())
             phdr.p_flags |= PF_X;
 
         offset += phdr.p_filesz;
@@ -174,20 +154,20 @@ KResult CoreDump::write_program_headers(size_t notes_size)
 KResult CoreDump::write_regions()
 {
     for (auto& region : m_process->space().regions()) {
-        if (region.is_kernel())
+        if (region->is_kernel())
             continue;
 
-        region.set_readable(true);
-        region.remap();
+        region->set_readable(true);
+        region->remap();
 
-        for (size_t i = 0; i < region.page_count(); i++) {
-            auto* page = region.physical_page(i);
+        for (size_t i = 0; i < region->page_count(); i++) {
+            auto* page = region->physical_page(i);
 
             uint8_t zero_buffer[PAGE_SIZE] = {};
             Optional<UserOrKernelBuffer> src_buffer;
 
             if (page) {
-                src_buffer = UserOrKernelBuffer::for_user_buffer(reinterpret_cast<uint8_t*>((region.vaddr().as_ptr() + (i * PAGE_SIZE))), PAGE_SIZE);
+                src_buffer = UserOrKernelBuffer::for_user_buffer(reinterpret_cast<uint8_t*>((region->vaddr().as_ptr() + (i * PAGE_SIZE))), PAGE_SIZE);
             } else {
                 // If the current page is not backed by a physical page, we zero it in the coredump file.
                 // TODO: Do we want to include the contents of pages that have not been faulted-in in the coredump?
@@ -253,23 +233,26 @@ ByteBuffer CoreDump::create_notes_threads_data() const
 ByteBuffer CoreDump::create_notes_regions_data() const
 {
     ByteBuffer regions_data;
-    for (size_t region_index = 0; region_index < m_process->space().region_count(); ++region_index) {
+    size_t region_index = 0;
+    for (auto& region : m_process->space().regions()) {
 
         ByteBuffer memory_region_info_buffer;
         ELF::Core::MemoryRegionInfo info {};
         info.header.type = ELF::Core::NotesEntryHeader::Type::MemoryRegionInfo;
 
-        auto& region = m_process->space().regions()[region_index];
-        info.region_start = region.vaddr().get();
-        info.region_end = region.vaddr().offset(region.size()).get();
-        info.program_header_index = region_index;
+        info.region_start = region->vaddr().get();
+        info.region_end = region->vaddr().offset(region->size()).get();
+        info.program_header_index = region_index++;
 
         memory_region_info_buffer.append((void*)&info, sizeof(info));
-
-        auto name = region.name();
-        if (name.is_null())
-            name = String::empty();
-        memory_region_info_buffer.append(name.characters(), name.length() + 1);
+        // NOTE: The region name *is* null-terminated, so the following is ok:
+        auto name = region->name();
+        if (name.is_empty()) {
+            char null_terminator = '\0';
+            memory_region_info_buffer.append(&null_terminator, 1);
+        } else {
+            memory_region_info_buffer.append(name.characters_without_null_termination(), name.length() + 1);
+        }
 
         regions_data += memory_region_info_buffer;
     }

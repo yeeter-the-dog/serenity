@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/String.h>
@@ -97,7 +77,7 @@ static bool parse_grpdb_entry(const String& line)
 {
     auto parts = line.split_view(':', true);
     if (parts.size() != 4) {
-        fprintf(stderr, "getgrent(): Malformed entry on line %u: '%s' has %zu parts\n", s_line_number, line.characters(), parts.size());
+        warnln("getgrent(): Malformed entry on line {}: '{}' has {} parts", s_line_number, line, parts.size());
         return false;
     }
 
@@ -109,7 +89,7 @@ static bool parse_grpdb_entry(const String& line)
 
     auto gid = gid_string.to_uint();
     if (!gid.has_value()) {
-        fprintf(stderr, "getgrent(): Malformed GID on line %u\n", s_line_number);
+        warnln("getgrent(): Malformed GID on line {}", s_line_number);
         return false;
     }
 
@@ -139,7 +119,7 @@ struct group* getgrent()
             return nullptr;
 
         if (ferror(s_stream)) {
-            fprintf(stderr, "getgrent(): Read error: %s\n", strerror(ferror(s_stream)));
+            warnln("getgrent(): Read error: {}", strerror(ferror(s_stream)));
             return nullptr;
         }
 

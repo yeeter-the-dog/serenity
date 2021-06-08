@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -49,18 +29,20 @@ public:
 
     Gfx::IntRect rect() const;
     Gfx::IntRect render_rect() const;
+    Gfx::DisjointRectSet opaque_render_rects() const;
+    Gfx::DisjointRectSet transparent_render_rects() const;
     void paint(Gfx::Painter&, const Gfx::IntRect&);
     void render(Gfx::Painter&);
     void render_to_cache();
     void on_mouse_event(const MouseEvent&);
     void notify_window_rect_changed(const Gfx::IntRect& old_rect, const Gfx::IntRect& new_rect);
-    void invalidate_title_bar();
+    void invalidate_titlebar();
     void invalidate(Gfx::IntRect relative_rect);
     void invalidate();
 
-    Gfx::IntRect title_bar_rect() const;
-    Gfx::IntRect title_bar_icon_rect() const;
-    Gfx::IntRect title_bar_text_rect() const;
+    Gfx::IntRect titlebar_rect() const;
+    Gfx::IntRect titlebar_icon_rect() const;
+    Gfx::IntRect titlebar_text_rect() const;
 
     Gfx::IntRect menubar_rect() const;
     int menu_row_count() const;
@@ -72,8 +54,9 @@ public:
 
     void start_flash_animation();
 
-    bool has_alpha_channel() const { return m_has_alpha_channel || frame_has_alpha(); }
+    bool has_alpha_channel() const { return m_has_alpha_channel; }
     void set_has_alpha_channel(bool value) { m_has_alpha_channel = value; }
+    bool has_shadow() const;
 
     void set_opacity(float);
     float opacity() const { return m_opacity; }
@@ -106,7 +89,6 @@ private:
     void paint_tool_window_frame(Gfx::Painter&);
     void paint_menubar(Gfx::Painter&);
     Gfx::Bitmap* window_shadow() const;
-    bool frame_has_alpha() const;
     Gfx::IntRect inflated_for_shadow(const Gfx::IntRect&) const;
     Gfx::Bitmap* inflate_for_shadow(Gfx::IntRect&, Gfx::IntPoint&) const;
 
@@ -114,7 +96,7 @@ private:
     void handle_menu_mouse_event(Menu&, const MouseEvent&);
 
     Gfx::WindowTheme::WindowState window_state_for_theme() const;
-    String compute_title_text() const;
+    String computed_title() const;
 
     Window& m_window;
     NonnullOwnPtrVector<Button> m_buttons;

@@ -1,35 +1,18 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Game.h"
+#include <AK/Array.h>
+#include <AK/NumericLimits.h>
 #include <AK/String.h>
 #include <stdlib.h>
 
-Game::Game(size_t grid_size, size_t target_tile)
+Game::Game(size_t grid_size, size_t target_tile, bool evil_ai)
     : m_grid_size(grid_size)
+    , m_evil_ai(evil_ai)
 {
     if (target_tile == 0)
         m_target_tile = 2048;
@@ -45,8 +28,8 @@ Game::Game(size_t grid_size, size_t target_tile)
             row.append(0);
     }
 
-    add_random_tile();
-    add_random_tile();
+    add_tile();
+    add_tile();
 }
 
 void Game::add_random_tile()
@@ -181,7 +164,17 @@ static bool is_stalled(const Game::Board& board)
     return true;
 }
 
-Game::MoveOutcome Game::attempt_move(Direction direction)
+static size_t get_number_of_free_cells(const Game::Board& board)
+{
+    size_t accumulator = 0;
+    for (auto& row : board) {
+        for (auto& cell : row)
+            accumulator += cell == 0;
+    }
+    return accumulator;
+}
+
+bool Game::slide_tiles(Direction direction)
 {
     size_t successful_merge_score = 0;
     Board new_board;
@@ -204,9 +197,18 @@ Game::MoveOutcome Game::attempt_move(Direction direction)
     bool moved = new_board != m_board;
     if (moved) {
         m_board = new_board;
-        m_turns++;
-        add_random_tile();
         m_score += successful_merge_score;
+    }
+
+    return moved;
+}
+
+Game::MoveOutcome Game::attempt_move(Direction direction)
+{
+    bool moved = slide_tiles(direction);
+    if (moved) {
+        m_turns++;
+        add_tile();
     }
 
     if (is_complete(m_board, m_target_tile))
@@ -216,6 +218,68 @@ Game::MoveOutcome Game::attempt_move(Direction direction)
     if (moved)
         return MoveOutcome::OK;
     return MoveOutcome::InvalidMove;
+}
+
+void Game::add_evil_tile()
+{
+    size_t worst_row = 0;
+    size_t worst_column = 0;
+    u32 worst_value = 2;
+
+    size_t most_free_cells = NumericLimits<size_t>::max();
+    size_t worst_score = NumericLimits<size_t>::max();
+
+    for (size_t row = 0; row < m_grid_size; row++) {
+        for (size_t column = 0; column < m_grid_size; column++) {
+            if (m_board[row][column] != 0)
+                continue;
+
+            for (u32 value : Array { 2, 4 }) {
+                Game saved_state = *this;
+                saved_state.m_board[row][column] = value;
+
+                if (is_stalled(saved_state.m_board)) {
+                    // We can stall the board now, instant game over.
+                    worst_row = row;
+                    worst_column = column;
+                    worst_value = value;
+
+                    goto found_worst_tile;
+                }
+
+                // These are the best outcome and score the player can achieve in one move.
+                // We want this to be as low as possible.
+                size_t best_outcome = 0;
+                size_t best_score = 0;
+                for (auto direction : Array { Direction::Down, Direction::Left, Direction::Right, Direction::Up }) {
+                    Game moved_state = saved_state;
+                    bool moved = moved_state.slide_tiles(direction);
+                    if (!moved) // invalid move
+                        continue;
+                    best_outcome = max(best_outcome, get_number_of_free_cells(moved_state.board()));
+                    best_score = max(best_score, moved_state.score());
+                }
+
+                // We already know a worse cell placement; discard.
+                if (best_outcome > most_free_cells)
+                    continue;
+
+                // This tile is the same as the worst we know in terms of board population,
+                // but the player can achieve the same or better score; discard.
+                if (best_outcome == most_free_cells && best_score >= worst_score)
+                    continue;
+
+                worst_row = row;
+                worst_column = column;
+                worst_value = value;
+
+                most_free_cells = best_outcome;
+                worst_score = best_score;
+            }
+        }
+    }
+found_worst_tile:
+    m_board[worst_row][worst_column] = worst_value;
 }
 
 u32 Game::largest_tile() const

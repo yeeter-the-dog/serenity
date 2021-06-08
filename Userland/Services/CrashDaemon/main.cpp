@@ -1,31 +1,12 @@
 /*
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/LexicalPath.h>
 #include <AK/MappedFile.h>
+#include <Kernel/API/InodeWatcherEvent.h>
 #include <LibCompress/Gzip.h>
 #include <LibCore/File.h>
 #include <LibCore/FileWatcher.h>
@@ -66,7 +47,7 @@ static bool compress_coredump(const String& coredump_path)
         return false;
     }
     auto output_path = String::formatted("{}.gz", coredump_path);
-    auto output_file_or_error = Core::File::open(output_path, Core::File::WriteOnly);
+    auto output_file_or_error = Core::File::open(output_path, Core::OpenMode::WriteOnly);
     if (output_file_or_error.is_error()) {
         dbgln("Could not open '{}' for writing: {}", output_path, output_file_or_error.error());
         return false;
@@ -103,7 +84,15 @@ static void print_backtrace(const String& coredump_path)
 static void launch_crash_reporter(const String& coredump_path, bool unlink_after_use)
 {
     pid_t child;
-    const char* argv[] = { "CrashReporter", coredump_path.characters(), unlink_after_use ? "--unlink" : nullptr, nullptr, nullptr };
+    const char* argv[4] = { "CrashReporter" };
+    if (unlink_after_use) {
+        argv[1] = "--unlink";
+        argv[2] = coredump_path.characters();
+        argv[3] = nullptr;
+    } else {
+        argv[1] = coredump_path.characters();
+        argv[2] = nullptr;
+    }
     if ((errno = posix_spawn(&child, "/bin/CrashReporter", nullptr, nullptr, const_cast<char**>(argv), environ))) {
         perror("posix_spawn");
     } else {
@@ -119,13 +108,19 @@ int main()
         return 1;
     }
 
-    Core::BlockingFileWatcher watcher { "/tmp/coredump" };
+    Core::BlockingFileWatcher watcher;
+    auto watch_result = watcher.add_watch("/tmp/coredump", Core::FileWatcherEvent::Type::ChildCreated);
+    if (watch_result.is_error()) {
+        warnln("Failed to watch the coredump directory: {}", watch_result.error());
+        VERIFY_NOT_REACHED();
+    }
+
     while (true) {
         auto event = watcher.wait_for_event();
         VERIFY(event.has_value());
-        if (event.value().type != Core::FileWatcherEvent::Type::ChildAdded)
+        if (event.value().type != Core::FileWatcherEvent::Type::ChildCreated)
             continue;
-        auto coredump_path = event.value().child_path;
+        auto& coredump_path = event.value().event_path;
         if (coredump_path.ends_with(".gz"))
             continue; // stops compress_coredump from accidentally triggering us
         dbgln("New coredump file: {}", coredump_path);

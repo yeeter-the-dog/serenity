@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ClockWidget.h"
@@ -43,7 +23,7 @@ ClockWidget::ClockWidget()
 
     m_time_width = font().width("22:22:22");
 
-    set_fixed_size(m_time_width + 20, 22);
+    set_fixed_size(m_time_width + 20, 21);
 
     m_timer = add<Core::Timer>(1000, [this] {
         static time_t last_update_time;
@@ -80,7 +60,7 @@ ClockWidget::ClockWidget()
     navigation_container.layout()->set_margins({ 2, 2, 3, 2 });
 
     m_prev_date = navigation_container.add<GUI::Button>();
-    m_prev_date->set_button_style(Gfx::ButtonStyle::CoolBar);
+    m_prev_date->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_prev_date->set_fixed_size(24, 24);
     m_prev_date->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-back.png"));
     m_prev_date->on_click = [&](auto) {
@@ -103,7 +83,7 @@ ClockWidget::ClockWidget()
     };
 
     m_selected_calendar_button = navigation_container.add<GUI::Button>();
-    m_selected_calendar_button->set_button_style(Gfx::ButtonStyle::CoolBar);
+    m_selected_calendar_button->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_selected_calendar_button->set_fixed_height(24);
     m_selected_calendar_button->on_click = [&](auto) {
         m_calendar->toggle_mode();
@@ -114,7 +94,7 @@ ClockWidget::ClockWidget()
     };
 
     m_next_date = navigation_container.add<GUI::Button>();
-    m_next_date->set_button_style(Gfx::ButtonStyle::CoolBar);
+    m_next_date->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_next_date->set_fixed_size(24, 24);
     m_next_date->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"));
     m_next_date->on_click = [&](auto) {
@@ -164,7 +144,7 @@ ClockWidget::ClockWidget()
     settings_container.layout()->add_spacer();
 
     m_jump_to_button = settings_container.add<GUI::Button>();
-    m_jump_to_button->set_button_style(Gfx::ButtonStyle::CoolBar);
+    m_jump_to_button->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_jump_to_button->set_fixed_size(24, 24);
     m_jump_to_button->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/calendar-date.png"));
     m_jump_to_button->set_tooltip("Jump to today");
@@ -173,7 +153,7 @@ ClockWidget::ClockWidget()
     };
 
     m_calendar_launcher = settings_container.add<GUI::Button>();
-    m_calendar_launcher->set_button_style(Gfx::ButtonStyle::CoolBar);
+    m_calendar_launcher->set_button_style(Gfx::ButtonStyle::Coolbar);
     m_calendar_launcher->set_fixed_size(24, 24);
     m_calendar_launcher->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-calendar.png"));
     m_calendar_launcher->set_tooltip("Calendar");
@@ -199,7 +179,7 @@ void ClockWidget::paint_event(GUI::PaintEvent& event)
     auto time_text = Core::DateTime::now().to_string("%T");
     GUI::Painter painter(*this);
     painter.add_clip_rect(frame_inner_rect());
-    painter.draw_text(event.rect(), time_text, Gfx::FontDatabase::default_font(), Gfx::TextAlignment::Center, palette().window_text());
+    painter.draw_text(frame_inner_rect().translated(0, 1), time_text, Gfx::FontDatabase::default_font(), Gfx::TextAlignment::Center, palette().window_text());
 }
 
 void ClockWidget::mousedown_event(GUI::MouseEvent& event)

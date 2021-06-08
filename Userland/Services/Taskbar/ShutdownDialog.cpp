@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ShutdownDialog.h"
@@ -29,6 +9,7 @@
 #include <AK/Vector.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/RadioButton.h>
 #include <LibGUI/Widget.h>
@@ -43,10 +24,9 @@ struct Option {
 };
 
 static const Vector<Option> options = {
-    { "Shut down", { "/bin/shutdown", "--now", nullptr }, true, true },
-    { "Restart", { "/bin/reboot", nullptr }, true, false },
+    { "Power off computer", { "/bin/shutdown", "--now", nullptr }, true, true },
+    { "Reboot", { "/bin/reboot", nullptr }, true, false },
     { "Log out", {}, false, false },
-    { "Sleep", {}, false, false },
 };
 
 Vector<char const*> ShutdownDialog::show()
@@ -62,29 +42,41 @@ Vector<char const*> ShutdownDialog::show()
 ShutdownDialog::ShutdownDialog()
     : Dialog(nullptr)
 {
-    resize(180, 180 + ((static_cast<int>(options.size()) - 3) * 16));
-    center_on_screen();
-    set_resizable(false);
-    set_title("SerenityOS");
-    set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/power.png"));
+    auto& widget = set_main_widget<GUI::Widget>();
+    widget.set_fill_with_background_color(true);
+    widget.set_layout<GUI::VerticalBoxLayout>();
+    widget.layout()->set_spacing(0);
 
-    // Request WindowServer to re-update us on the current theme as we might've not been alive for the last notification.
-    refresh_system_theme();
+    auto& banner_image = widget.add<GUI::ImageWidget>();
+    banner_image.load_from_file("/res/graphics/brand-banner.png");
 
-    auto& main = set_main_widget<GUI::Widget>();
-    main.set_layout<GUI::VerticalBoxLayout>();
-    main.layout()->set_margins({ 8, 8, 8, 8 });
-    main.layout()->set_spacing(8);
-    main.set_fill_with_background_color(true);
+    auto& content_container = widget.add<GUI::Widget>();
+    content_container.set_layout<GUI::HorizontalBoxLayout>();
 
-    auto& header = main.add<GUI::Label>();
-    header.set_text("What would you like to do?");
-    header.set_fixed_height(16);
-    header.set_font(Gfx::FontDatabase::default_bold_font());
+    auto& left_container = content_container.add<GUI::Widget>();
+    left_container.set_fixed_width(60);
+    left_container.set_layout<GUI::VerticalBoxLayout>();
+    left_container.layout()->set_margins({ 0, 12, 0, 0 });
+
+    auto& icon_wrapper = left_container.add<GUI::Widget>();
+    icon_wrapper.set_fixed_size(32, 48);
+    icon_wrapper.set_layout<GUI::VerticalBoxLayout>();
+
+    auto& icon_image = icon_wrapper.add<GUI::ImageWidget>();
+    icon_image.set_bitmap(Gfx::Bitmap::load_from_file("/res/icons/32x32/shutdown.png"));
+
+    auto& right_container = content_container.add<GUI::Widget>();
+    right_container.set_layout<GUI::VerticalBoxLayout>();
+    right_container.layout()->set_margins({ 0, 12, 12, 8 });
+
+    auto& label = right_container.add<GUI::Label>("What would you like to do?");
+    label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
+    label.set_fixed_height(22);
+    label.set_font(Gfx::FontDatabase::default_font().bold_variant());
 
     for (size_t i = 0; i < options.size(); i++) {
         auto action = options[i];
-        auto& radio = main.add<GUI::RadioButton>();
+        auto& radio = right_container.add<GUI::RadioButton>();
         radio.set_enabled(action.enabled);
         radio.set_text(action.title);
 
@@ -98,21 +90,32 @@ ShutdownDialog::ShutdownDialog()
         }
     }
 
-    auto& button_box = main.add<GUI::Widget>();
-    button_box.set_layout<GUI::HorizontalBoxLayout>();
-    button_box.layout()->set_spacing(8);
+    right_container.layout()->add_spacer();
 
-    auto& ok_button = button_box.add<GUI::Button>();
+    auto& button_container = right_container.add<GUI::Widget>();
+    button_container.set_fixed_height(23);
+    button_container.set_layout<GUI::HorizontalBoxLayout>();
+    button_container.layout()->set_spacing(5);
+    button_container.layout()->add_spacer();
+    auto& ok_button = button_container.add<GUI::Button>("OK");
+    ok_button.set_fixed_size(80, 23);
     ok_button.on_click = [this](auto) {
-        done(ExecResult::ExecOK);
+        done(Dialog::ExecOK);
     };
-    ok_button.set_text("OK");
-
-    auto& cancel_button = button_box.add<GUI::Button>();
+    auto& cancel_button = button_container.add<GUI::Button>("Cancel");
+    cancel_button.set_fixed_size(80, 23);
     cancel_button.on_click = [this](auto) {
         done(ExecResult::ExecCancel);
     };
-    cancel_button.set_text("Cancel");
+
+    resize(413, 235);
+    center_on_screen();
+    set_resizable(false);
+    set_title("Exit SerenityOS");
+    set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/power.png"));
+
+    // Request WindowServer to re-update us on the current theme as we might've not been alive for the last notification.
+    refresh_system_theme();
 }
 
 ShutdownDialog::~ShutdownDialog()

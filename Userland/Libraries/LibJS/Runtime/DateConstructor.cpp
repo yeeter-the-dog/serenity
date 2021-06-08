@@ -1,29 +1,9 @@
 /*
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
+ * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2020, Nico Weber <thakis@chromium.org>
  * Copyright (c) 2021, Petróczi Zoltán <petroczizoltan@tutanota.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/GenericLexer.h>
@@ -161,26 +141,18 @@ DateConstructor::~DateConstructor()
 
 Value DateConstructor::call()
 {
-    auto date = construct(*this);
-    if (!date.is_object())
-        return {};
-    return js_string(heap(), static_cast<Date&>(date.as_object()).string());
+    return js_string(heap(), Date::now(global_object())->string());
 }
 
 Value DateConstructor::construct(Function&)
 {
     auto& vm = this->vm();
-    if (vm.argument_count() == 0) {
-        struct timeval tv;
-        gettimeofday(&tv, nullptr);
-        auto datetime = Core::DateTime::now();
-        auto milliseconds = static_cast<u16>(tv.tv_usec / 1000);
-        return Date::create(global_object(), datetime, milliseconds);
-    }
+    if (vm.argument_count() == 0)
+        return Date::now(global_object());
 
     auto create_invalid_date = [this]() {
-        auto datetime = Core::DateTime::from_timestamp(static_cast<time_t>(0));
-        auto milliseconds = static_cast<u16>(0);
+        auto datetime = Core::DateTime::create(1970, 1, 1, 0, 0, 0);
+        auto milliseconds = static_cast<i16>(0);
         return Date::create(global_object(), datetime, milliseconds, true);
     };
 
@@ -200,8 +172,10 @@ Value DateConstructor::construct(Function&)
 
         // A timestamp since the epoch, in UTC.
         double value_as_double = value.as_double();
+        if (value_as_double > Date::time_clip)
+            return create_invalid_date();
         auto datetime = Core::DateTime::from_timestamp(static_cast<time_t>(value_as_double / 1000));
-        auto milliseconds = static_cast<u16>(fmod(value_as_double, 1000));
+        auto milliseconds = static_cast<i16>(fmod(value_as_double, 1000));
         return Date::create(global_object(), datetime, milliseconds);
     }
 
@@ -275,7 +249,10 @@ Value DateConstructor::construct(Function&)
         year += 1900;
     int month = month_index + 1;
     auto datetime = Core::DateTime::create(year, month, day, hours, minutes, seconds);
-    return Date::create(global_object(), datetime, milliseconds);
+    auto* date = Date::create(global_object(), datetime, milliseconds);
+    if (date->time() > Date::time_clip)
+        return create_invalid_date();
+    return date;
 }
 
 JS_DEFINE_NATIVE_FUNCTION(DateConstructor::now)

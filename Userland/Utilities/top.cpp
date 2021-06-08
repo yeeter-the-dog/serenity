@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/HashMap.h>
@@ -97,25 +77,24 @@ static Snapshot get_snapshot()
         return {};
 
     Snapshot snapshot;
-    for (auto& it : all_processes.value()) {
-        auto& stats = it.value;
-        for (auto& thread : stats.threads) {
+    for (auto& process : all_processes.value()) {
+        for (auto& thread : process.threads) {
             snapshot.sum_times_scheduled += thread.times_scheduled;
             ThreadData thread_data;
             thread_data.tid = thread.tid;
-            thread_data.pid = stats.pid;
-            thread_data.pgid = stats.pgid;
-            thread_data.pgp = stats.pgp;
-            thread_data.sid = stats.sid;
-            thread_data.uid = stats.uid;
-            thread_data.gid = stats.gid;
-            thread_data.ppid = stats.ppid;
-            thread_data.nfds = stats.nfds;
-            thread_data.name = stats.name;
-            thread_data.tty = stats.tty;
-            thread_data.amount_virtual = stats.amount_virtual;
-            thread_data.amount_resident = stats.amount_resident;
-            thread_data.amount_shared = stats.amount_shared;
+            thread_data.pid = process.pid;
+            thread_data.pgid = process.pgid;
+            thread_data.pgp = process.pgp;
+            thread_data.sid = process.sid;
+            thread_data.uid = process.uid;
+            thread_data.gid = process.gid;
+            thread_data.ppid = process.ppid;
+            thread_data.nfds = process.nfds;
+            thread_data.name = process.name;
+            thread_data.tty = process.tty;
+            thread_data.amount_virtual = process.amount_virtual;
+            thread_data.amount_resident = process.amount_resident;
+            thread_data.amount_shared = process.amount_shared;
             thread_data.syscall_count = thread.syscall_count;
             thread_data.inode_faults = thread.inode_faults;
             thread_data.zero_faults = thread.zero_faults;
@@ -123,9 +102,9 @@ static Snapshot get_snapshot()
             thread_data.times_scheduled = thread.times_scheduled;
             thread_data.priority = thread.priority;
             thread_data.state = thread.state;
-            thread_data.username = stats.username;
+            thread_data.username = process.username;
 
-            snapshot.map.set({ stats.pid, thread.tid }, move(thread_data));
+            snapshot.map.set({ process.pid, thread.tid }, move(thread_data));
         }
     }
 
@@ -180,7 +159,7 @@ int main(int, char**)
         auto sum_diff = current.sum_times_scheduled - prev.sum_times_scheduled;
 
         printf("\033[3J\033[H\033[2J");
-        printf("\033[47;30m%6s %3s %3s  %-9s  %-10s  %6s  %6s  %4s  %s\033[K\033[0m\n",
+        printf("\033[47;30m%6s %3s %3s  %-9s  %-13s  %6s  %6s  %4s  %s\033[K\033[0m\n",
             "PID",
             "TID",
             "PRI",
@@ -201,8 +180,8 @@ int main(int, char**)
             u32 times_scheduled_before = (*jt).value.times_scheduled;
             u32 times_scheduled_diff = times_scheduled_now - times_scheduled_before;
             it.value.times_scheduled_since_prev = times_scheduled_diff;
-            it.value.cpu_percent = ((times_scheduled_diff * 100) / sum_diff);
-            it.value.cpu_percent_decimal = (((times_scheduled_diff * 1000) / sum_diff) % 10);
+            it.value.cpu_percent = sum_diff > 0 ? ((times_scheduled_diff * 100) / sum_diff) : 0;
+            it.value.cpu_percent_decimal = sum_diff > 0 ? (((times_scheduled_diff * 1000) / sum_diff) % 10) : 0;
             threads.append(&it.value);
         }
 
@@ -212,7 +191,7 @@ int main(int, char**)
 
         int row = 0;
         for (auto* thread : threads) {
-            int nprinted = printf("%6d %3d %2u   %-9s  %-10s  %6zu  %6zu  %2u.%1u  ",
+            int nprinted = printf("%6d %3d %2u   %-9s  %-13s  %6zu  %6zu  %2u.%1u  ",
                 thread->pid,
                 thread->tid,
                 thread->priority,

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -31,6 +11,7 @@
 #include <AK/IntrusiveList.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullRefPtrVector.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/TypeCasts.h>
 #include <AK/Weakable.h>
@@ -39,7 +20,36 @@
 
 namespace Core {
 
-class RPCClient;
+#define REGISTER_CORE_OBJECT(namespace_, class_name)                                                                                             \
+    namespace Core {                                                                                                                             \
+    namespace Registration {                                                                                                                     \
+    Core::ObjectClassRegistration registration_##class_name(#namespace_ "::" #class_name, []() { return namespace_::class_name::construct(); }); \
+    }                                                                                                                                            \
+    }
+
+class ObjectClassRegistration {
+    AK_MAKE_NONCOPYABLE(ObjectClassRegistration);
+    AK_MAKE_NONMOVABLE(ObjectClassRegistration);
+
+public:
+    ObjectClassRegistration(const String& class_name, Function<NonnullRefPtr<Object>()> factory, ObjectClassRegistration* parent_class = nullptr);
+    ~ObjectClassRegistration();
+
+    String class_name() const { return m_class_name; }
+    const ObjectClassRegistration* parent_class() const { return m_parent_class; }
+    NonnullRefPtr<Object> construct() const { return m_factory(); }
+    bool is_derived_from(const ObjectClassRegistration& base_class) const;
+
+    static void for_each(Function<void(const ObjectClassRegistration&)>);
+    static const ObjectClassRegistration* find(const String& class_name);
+
+private:
+    String m_class_name;
+    Function<NonnullRefPtr<Object>()> m_factory;
+    ObjectClassRegistration* m_parent_class { nullptr };
+};
+
+class InspectorServerConnection;
 
 enum class TimerShouldFireWhenNotVisible {
     No = 0,
@@ -52,7 +62,7 @@ public:                                                                \
     template<class... Args>                                            \
     static inline NonnullRefPtr<klass> construct(Args&&... args)       \
     {                                                                  \
-        return adopt(*new klass(forward<Args>(args)...));              \
+        return adopt_ref(*new klass(forward<Args>(args)...));          \
     }
 
 #define C_OBJECT_ABSTRACT(klass) \
@@ -67,7 +77,7 @@ class Object
     AK_MAKE_NONCOPYABLE(Object);
     AK_MAKE_NONMOVABLE(Object);
 
-    IntrusiveListNode m_all_objects_list_node;
+    IntrusiveListNode<Object> m_all_objects_list_node;
 
 public:
     virtual ~Object();
@@ -75,7 +85,7 @@ public:
     virtual const char* class_name() const = 0;
 
     const String& name() const { return m_name; }
-    void set_name(const StringView& name) { m_name = name; }
+    void set_name(String name) { m_name = move(name); }
 
     NonnullRefPtrVector<Object>& children() { return m_children; }
     const NonnullRefPtrVector<Object>& children() const { return m_children; }
@@ -90,13 +100,13 @@ public:
     }
 
     template<typename T, typename Callback>
-    void for_each_child_of_type(Callback callback) requires IsBaseOf<Object, T>::value;
+    void for_each_child_of_type(Callback callback) requires IsBaseOf<Object, T>;
 
     template<typename T>
-    T* find_child_of_type_named(const String&) requires IsBaseOf<Object, T>::value;
+    T* find_child_of_type_named(const String&) requires IsBaseOf<Object, T>;
 
     template<typename T>
-    T* find_descendant_of_type_named(const String&) requires IsBaseOf<Object, T>::value;
+    T* find_descendant_of_type_named(const String&) requires IsBaseOf<Object, T>;
 
     bool is_ancestor_of(const Object&) const;
 
@@ -120,11 +130,11 @@ public:
 
     void save_to(JsonObject&);
 
-    bool set_property(const StringView& name, const JsonValue& value);
-    JsonValue property(const StringView& name) const;
+    bool set_property(String const& name, const JsonValue& value);
+    JsonValue property(String const& name) const;
     const HashMap<String, NonnullOwnPtr<Property>>& properties() const { return m_properties; }
 
-    static IntrusiveList<Object, &Object::m_all_objects_list_node>& all_objects();
+    static IntrusiveList<Object, RawPtr<Object>, &Object::m_all_objects_list_node>& all_objects();
 
     void dispatch_event(Core::Event&, Object* stay_within = nullptr);
 
@@ -146,8 +156,10 @@ public:
 
     bool is_being_inspected() const { return m_inspector_count; }
 
-    void increment_inspector_count(Badge<RPCClient>);
-    void decrement_inspector_count(Badge<RPCClient>);
+    void increment_inspector_count(Badge<InspectorServerConnection>);
+    void decrement_inspector_count(Badge<InspectorServerConnection>);
+
+    virtual bool load_from_json(const JsonObject&, RefPtr<Core::Object> (*)(const String&)) { return false; }
 
 protected:
     explicit Object(Object* parent = nullptr);
@@ -187,17 +199,17 @@ struct AK::Formatter<Core::Object> : AK::Formatter<FormatString> {
 
 namespace Core {
 template<typename T, typename Callback>
-inline void Object::for_each_child_of_type(Callback callback) requires IsBaseOf<Object, T>::value
+inline void Object::for_each_child_of_type(Callback callback) requires IsBaseOf<Object, T>
 {
     for_each_child([&](auto& child) {
-        if (auto* child_as_t = dynamic_cast<T*>(&child); child_as_t)
-            return callback(*child_as_t);
+        if (is<T>(child))
+            return callback(static_cast<T&>(child));
         return IterationDecision::Continue;
     });
 }
 
 template<typename T>
-T* Object::find_child_of_type_named(const String& name) requires IsBaseOf<Object, T>::value
+T* Object::find_child_of_type_named(const String& name) requires IsBaseOf<Object, T>
 {
     T* found_child = nullptr;
     for_each_child_of_type<T>([&](auto& child) {
@@ -212,11 +224,11 @@ T* Object::find_child_of_type_named(const String& name) requires IsBaseOf<Object
 }
 
 template<typename T>
-T* Object::find_descendant_of_type_named(const String& name) requires IsBaseOf<Object, T>::value
+T* Object::find_descendant_of_type_named(String const& name) requires IsBaseOf<Object, T>
 {
-    auto* this_as_t = dynamic_cast<T*>(this);
-    if (this_as_t && this->name() == name)
-        return this_as_t;
+    if (is<T>(*this) && this->name() == name) {
+        return static_cast<T*>(this);
+    }
     T* found_child = nullptr;
     for_each_child([&](auto& child) {
         found_child = child.template find_descendant_of_type_named<T>(name);
@@ -341,11 +353,12 @@ T* Object::find_descendant_of_type_named(const String& name) requires IsBaseOf<O
 #define REGISTER_TEXT_ALIGNMENT_PROPERTY(property_name, getter, setter) \
     REGISTER_ENUM_PROPERTY(                                             \
         property_name, getter, setter, Gfx::TextAlignment,              \
-        { Gfx::TextAlignment::TopLeft, "TopLeft" },                     \
-        { Gfx::TextAlignment::CenterLeft, "CenterLeft" },               \
         { Gfx::TextAlignment::Center, "Center" },                       \
+        { Gfx::TextAlignment::CenterLeft, "CenterLeft" },               \
         { Gfx::TextAlignment::CenterRight, "CenterRight" },             \
+        { Gfx::TextAlignment::TopLeft, "TopLeft" },                     \
         { Gfx::TextAlignment::TopRight, "TopRight" },                   \
+        { Gfx::TextAlignment::BottomLeft, "BottomLeft" },               \
         { Gfx::TextAlignment::BottomRight, "BottomRight" })
 
 #define REGISTER_FONT_WEIGHT_PROPERTY(property_name, getter, setter) \

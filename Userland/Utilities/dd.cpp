@@ -1,51 +1,28 @@
 /*
  * Copyright (c) 2021, János Tóth <toth-janos@outlook.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
-
 #include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 const char* usage = "usage:\n"
                     "\tdd <options>\n"
                     "options:\n"
                     "\tif=<file>\tinput file (default: stdin)\n"
                     "\tof=<file>\toutput file (default: stdout)\n"
-                    "\tbs=<size>\tblocks size (default: 512)\n"
+                    "\tbs=<size>\tblocks size may be followed by multiplicate suffixes: k=1024, M=1024*1024, G=1024*1024*1024 (default: 512)\n"
                     "\tcount=<size>\t<size> blocks to copy (default: 0 (until end-of-file))\n"
                     "\tseek=<size>\tskip <size> blocks at start of output (default: 0)\n"
-                    "\tskip=<size>\tskip <size> blocks at start of intput (default: 0)\n"
+                    "\tskip=<size>\tskip <size> blocks at start of input (default: 0)\n"
                     "\tstatus=<level>\tlevel of output (default: default)\n"
                     "\t\t\tdefault - error messages + final statistics\n"
                     "\t\t\tnone - just error messages\n"
@@ -64,7 +41,7 @@ static String split_at_equals(const char* argument)
 
     auto values = string_value.split('=');
     if (values.size() != 2) {
-        fprintf(stderr, "Unable to parse: %s\n", argument);
+        warnln("Unable to parse: {}", argument);
         return {};
     } else {
         return values[1];
@@ -78,9 +55,9 @@ static int handle_io_file_arguments(int& fd, int flags, const char* argument)
         return -1;
     }
 
-    fd = open(value.characters(), flags);
+    fd = open(value.characters(), flags, 0666);
     if (fd == -1) {
-        fprintf(stderr, "Unable to open: %s\n", value.characters());
+        warnln("Unable to open: {}", value);
         return -1;
     } else {
         return 0;
@@ -94,15 +71,31 @@ static int handle_size_arguments(size_t& numeric_value, const char* argument)
         return -1;
     }
 
+    unsigned suffix_multiplier = 1;
+    switch (value.to_lowercase()[value.length() - 1]) {
+    case 'k':
+        suffix_multiplier = KiB;
+        value = value.substring(0, value.length() - 1);
+        break;
+    case 'm':
+        suffix_multiplier = MiB;
+        value = value.substring(0, value.length() - 1);
+        break;
+    case 'g':
+        suffix_multiplier = GiB;
+        value = value.substring(0, value.length() - 1);
+        break;
+    }
+
     Optional<unsigned> numeric_optional = value.to_uint();
     if (!numeric_optional.has_value()) {
-        fprintf(stderr, "Invalid size-value: %s\n", value.characters());
+        warnln("Invalid size-value: {}", value);
         return -1;
     }
 
-    numeric_value = numeric_optional.value();
+    numeric_value = numeric_optional.value() * suffix_multiplier;
     if (numeric_value < 1) {
-        fprintf(stderr, "Invalid size-value: %lu\n", numeric_value);
+        warnln("Invalid size-value: {}", numeric_value);
         return -1;
     } else {
         return 0;
@@ -126,7 +119,7 @@ static int handle_status_arguments(Status& status, const char* argument)
         status = None;
         return 0;
     } else {
-        fprintf(stderr, "Unknown status: %s\n", value.characters());
+        warnln("Unknown status: {}", value);
         return -1;
     }
 }
@@ -136,7 +129,7 @@ int main(int argc, char** argv)
     int input_fd = 0;
     int input_flags = O_RDONLY;
     int output_fd = 1;
-    int output_flags = O_CREAT | O_WRONLY;
+    int output_flags = O_CREAT | O_WRONLY | O_TRUNC;
     size_t block_size = 512;
     size_t count = 0;
     size_t skip = 0;
@@ -151,7 +144,7 @@ int main(int argc, char** argv)
 
     for (int a = 1; a < argc; a++) {
         if (!strcmp(argv[a], "--help")) {
-            printf("%s", usage);
+            out("{}", usage);
             return 0;
         } else if (!strncmp(argv[a], "if=", 3)) {
             if (handle_io_file_arguments(input_fd, input_flags, argv[a]) < 0) {
@@ -182,19 +175,19 @@ int main(int argc, char** argv)
                 return 1;
             }
         } else {
-            fprintf(stderr, "%s", usage);
+            warn("{}", usage);
             return 1;
         }
     }
 
     if ((buffer = (uint8_t*)malloc(block_size)) == nullptr) {
-        fprintf(stderr, "Unable to allocate %lu bytes for the buffer.\n", block_size);
+        warnln("Unable to allocate {} bytes for the buffer.", block_size);
         return -1;
     }
 
     if (seek > 0) {
         if (lseek(output_fd, seek * block_size, SEEK_SET) < 0) {
-            fprintf(stderr, "Unable to seek %lu bytes.\n", seek * block_size);
+            warnln("Unable to seek {} bytes.", seek * block_size);
             return -1;
         }
     }
@@ -202,7 +195,7 @@ int main(int argc, char** argv)
     while (1) {
         nread = read(input_fd, buffer, block_size);
         if (nread < 0) {
-            fprintf(stderr, "Cannot read from the input.\n");
+            warnln("Cannot read from the input.");
             break;
         } else if (nread == 0) {
             break;
@@ -219,7 +212,7 @@ int main(int argc, char** argv)
 
             nwritten = write(output_fd, buffer, nread);
             if (nwritten < 0) {
-                fprintf(stderr, "Cannot write to the output.\n");
+                warnln("Cannot write to the output.");
                 break;
             } else if (nwritten == 0) {
                 break;
@@ -240,9 +233,9 @@ int main(int argc, char** argv)
     }
 
     if (status == Default) {
-        fprintf(stderr, "%lu+%lu blocks in\n", total_blocks_in, partial_blocks_in);
-        fprintf(stderr, "%lu+%lu blocks out\n", total_blocks_out, partial_blocks_out);
-        fprintf(stderr, "%lu bytes copied.\n", total_bytes_copied);
+        warnln("{}+{} blocks in", total_blocks_in, partial_blocks_in);
+        warnln("{}+{} blocks out", total_blocks_out, partial_blocks_out);
+        warnln("{} bytes copied.", total_bytes_copied);
     }
 
     free(buffer);

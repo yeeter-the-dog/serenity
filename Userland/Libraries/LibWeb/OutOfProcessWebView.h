@@ -1,33 +1,13 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
 #include <AK/URL.h>
-#include <LibGUI/ScrollableWidget.h>
+#include <LibGUI/AbstractScrollableWidget.h>
 #include <LibGUI/Widget.h>
 #include <LibWeb/WebViewHooks.h>
 
@@ -36,7 +16,7 @@ namespace Web {
 class WebContentClient;
 
 class OutOfProcessWebView final
-    : public GUI::ScrollableWidget
+    : public GUI::AbstractScrollableWidget
     , public Web::WebViewHooks {
     C_OBJECT(OutOfProcessWebView);
 
@@ -72,12 +52,15 @@ public:
     void notify_server_did_finish_loading(Badge<WebContentClient>, const URL&);
     void notify_server_did_request_context_menu(Badge<WebContentClient>, const Gfx::IntPoint&);
     void notify_server_did_request_link_context_menu(Badge<WebContentClient>, const Gfx::IntPoint&, const URL&, const String& target, unsigned modifiers);
+    void notify_server_did_request_image_context_menu(Badge<WebContentClient>, const Gfx::IntPoint&, const URL&, const String& target, unsigned modifiers, const Gfx::ShareableBitmap&);
     void notify_server_did_request_alert(Badge<WebContentClient>, const String& message);
     bool notify_server_did_request_confirm(Badge<WebContentClient>, const String& message);
     String notify_server_did_request_prompt(Badge<WebContentClient>, const String& message, const String& default_);
     void notify_server_did_get_source(const URL& url, const String& source);
     void notify_server_did_js_console_output(const String& method, const String& line);
     void notify_server_did_change_favicon(const Gfx::Bitmap& favicon);
+    String notify_server_did_request_cookie(Badge<WebContentClient>, const URL& url, Cookie::Source source);
+    void notify_server_did_set_cookie(Badge<WebContentClient>, const URL& url, const Cookie::ParsedCookie& cookie, Cookie::Source source);
 
 private:
     OutOfProcessWebView();
@@ -93,7 +76,7 @@ private:
     virtual void theme_change_event(GUI::ThemeChangeEvent&) override;
     virtual void screen_rect_change_event(GUI::ScreenRectChangeEvent&) override;
 
-    // ^ScrollableWidget
+    // ^AbstractScrollableWidget
     virtual void did_scroll() override;
 
     void request_repaint();

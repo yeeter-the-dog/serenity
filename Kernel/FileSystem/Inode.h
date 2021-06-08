@@ -1,34 +1,15 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
 #include <AK/Function.h>
 #include <AK/HashTable.h>
-#include <AK/InlineLinkedList.h>
+#include <AK/IntrusiveList.h>
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
@@ -43,8 +24,7 @@
 namespace Kernel {
 
 class Inode : public RefCounted<Inode>
-    , public Weakable<Inode>
-    , public InlineLinkedListNode<Inode> {
+    , public Weakable<Inode> {
     friend class VFS;
     friend class FS;
 
@@ -72,10 +52,10 @@ public:
     virtual KResult attach(FileDescription&) { return KSuccess; }
     virtual void detach(FileDescription&) { }
     virtual void did_seek(FileDescription&, off_t) { }
-    virtual ssize_t read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const = 0;
+    virtual KResultOr<ssize_t> read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const = 0;
     virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntryView&)>) const = 0;
     virtual RefPtr<Inode> lookup(StringView name) = 0;
-    virtual ssize_t write_bytes(off_t, ssize_t, const UserOrKernelBuffer& data, FileDescription*) = 0;
+    virtual KResultOr<ssize_t> write_bytes(off_t, ssize_t, const UserOrKernelBuffer& data, FileDescription*) = 0;
     virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) = 0;
     virtual KResult add_child(Inode&, const StringView& name, mode_t) = 0;
     virtual KResult remove_child(const StringView& name) = 0;
@@ -96,9 +76,9 @@ public:
 
     bool is_metadata_dirty() const { return m_metadata_dirty; }
 
-    virtual int set_atime(time_t);
-    virtual int set_ctime(time_t);
-    virtual int set_mtime(time_t);
+    virtual KResult set_atime(time_t);
+    virtual KResult set_ctime(time_t);
+    virtual KResult set_mtime(time_t);
     virtual KResult increment_link_count();
     virtual KResult decrement_link_count();
 
@@ -110,7 +90,6 @@ public:
     RefPtr<SharedInodeVMObject> shared_vmobject() const;
     bool is_shared_vmobject(const SharedInodeVMObject&) const;
 
-    static InlineLinkedList<Inode>& all_with_lock();
     static void sync();
 
     bool has_watchers() const { return !m_watchers.is_empty(); }
@@ -120,19 +99,15 @@ public:
 
     NonnullRefPtr<FIFO> fifo();
 
-    // For InlineLinkedListNode.
-    Inode* m_next { nullptr };
-    Inode* m_prev { nullptr };
-
-    static SpinLock<u32>& all_inodes_lock();
-
 protected:
     Inode(FS& fs, InodeIndex);
     void set_metadata_dirty(bool);
     KResult prepare_to_write_data();
 
-    void did_add_child(const InodeIdentifier&);
-    void did_remove_child(const InodeIdentifier&);
+    void did_add_child(InodeIdentifier const& child_id, String const& name);
+    void did_remove_child(InodeIdentifier const& child_id, String const& name);
+    void did_modify_contents();
+    void did_delete_self();
 
     mutable Lock m_lock { "Inode" };
 
@@ -144,6 +119,10 @@ private:
     HashTable<InodeWatcher*> m_watchers;
     bool m_metadata_dirty { false };
     RefPtr<FIFO> m_fifo;
+    IntrusiveListNode<Inode> m_inode_list_node;
+
+public:
+    using List = IntrusiveList<Inode, RawPtr<Inode>, &Inode::m_inode_list_node>;
 };
 
 }

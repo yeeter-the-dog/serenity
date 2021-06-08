@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -57,6 +37,8 @@ void ArrayConstructor::initialize(GlobalObject& global_object)
     define_native_function(vm.names.from, from, 1, attr);
     define_native_function(vm.names.isArray, is_array, 1, attr);
     define_native_function(vm.names.of, of, 0, attr);
+
+    define_native_property(vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 }
 
 Value ArrayConstructor::call()
@@ -105,6 +87,8 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
         map_fn = &callback.as_function();
     }
 
+    auto this_arg = vm.argument(2);
+
     // Array.from() lets you create Arrays from:
     if (auto size = object->indexed_properties().array_like_size()) {
         // * array-like objects (objects with a length property and indexed elements)
@@ -116,7 +100,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
                 if (vm.exception())
                     return {};
 
-                auto map_fn_result = vm.call(*map_fn, value, element);
+                auto map_fn_result = vm.call(*map_fn, this_arg, element, Value((i32)i));
                 if (vm.exception())
                     return {};
 
@@ -130,12 +114,14 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
         array->set_indexed_property_elements(move(elements));
     } else {
         // * iterable objects
+        i32 i = 0;
         get_iterator_values(global_object, value, [&](Value element) {
             if (vm.exception())
                 return IterationDecision::Break;
 
             if (map_fn) {
-                auto map_fn_result = vm.call(*map_fn, value, element);
+                auto map_fn_result = vm.call(*map_fn, this_arg, element, Value(i));
+                i++;
                 if (vm.exception())
                     return IterationDecision::Break;
 
@@ -150,15 +136,13 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
             return {};
     }
 
-    // FIXME: if interpreter.argument_count() >= 3: thisArg
-
     return array;
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::is_array)
 {
     auto value = vm.argument(0);
-    return Value(value.is_array());
+    return Value(value.is_array(global_object));
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::of)
@@ -167,6 +151,11 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::of)
     for (size_t i = 0; i < vm.argument_count(); ++i)
         array->indexed_properties().append(vm.argument(i));
     return array;
+}
+
+JS_DEFINE_NATIVE_GETTER(ArrayConstructor::symbol_species_getter)
+{
+    return vm.this_value(global_object);
 }
 
 }

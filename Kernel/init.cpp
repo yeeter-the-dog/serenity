@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Types.h>
@@ -32,12 +12,11 @@
 #include <Kernel/CMOS.h>
 #include <Kernel/CommandLine.h>
 #include <Kernel/DMI.h>
-#include <Kernel/Devices/BXVGADevice.h>
 #include <Kernel/Devices/FullDevice.h>
 #include <Kernel/Devices/HID/HIDManagement.h>
-#include <Kernel/Devices/MBVGADevice.h>
 #include <Kernel/Devices/MemoryDevice.h>
 #include <Kernel/Devices/NullDevice.h>
+#include <Kernel/Devices/PCISerialDevice.h>
 #include <Kernel/Devices/RandomDevice.h>
 #include <Kernel/Devices/SB16.h>
 #include <Kernel/Devices/SerialDevice.h>
@@ -46,6 +25,7 @@
 #include <Kernel/Devices/ZeroDevice.h>
 #include <Kernel/FileSystem/Ext2FileSystem.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
+#include <Kernel/Graphics/GraphicsManagement.h>
 #include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/Interrupts/APIC.h>
@@ -66,12 +46,14 @@
 #include <Kernel/Random.h>
 #include <Kernel/Scheduler.h>
 #include <Kernel/Storage/StorageManagement.h>
+#include <Kernel/TTY/ConsoleManagement.h>
 #include <Kernel/TTY/PTYMultiplexer.h>
 #include <Kernel/TTY/VirtualConsole.h>
 #include <Kernel/Tasks/FinalizerTask.h>
 #include <Kernel/Tasks/SyncTask.h>
 #include <Kernel/Time/TimeManagement.h>
 #include <Kernel/VM/MemoryManager.h>
+#include <Kernel/VirtIO/VirtIO.h>
 #include <Kernel/WorkQueue.h>
 #include <Kernel/kstdio.h>
 
@@ -90,12 +72,13 @@ extern "C" u8* end_of_safemem_text;
 extern "C" u8* start_of_safemem_atomic_text;
 extern "C" u8* end_of_safemem_atomic_text;
 
-extern "C" FlatPtr end_of_kernel_image;
+extern "C" u8* end_of_kernel_image;
 
 multiboot_module_entry_t multiboot_copy_boot_modules_array[16];
 size_t multiboot_copy_boot_modules_count;
 
 extern "C" const char kernel_cmdline[4096];
+bool g_in_early_boot;
 
 namespace Kernel {
 
@@ -104,7 +87,7 @@ static void setup_serial_debug();
 
 // boot.S expects these functions to exactly have the following signatures.
 // We declare them here to ensure their signatures don't accidentally change.
-extern "C" void init_finished(u32 cpu);
+extern "C" void init_finished(u32 cpu) __attribute__((used));
 extern "C" [[noreturn]] void init_ap(u32 cpu, Processor* processor_info);
 extern "C" [[noreturn]] void init();
 
@@ -124,11 +107,12 @@ static Processor s_bsp_processor; // global but let's keep it "private"
 
 extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
 {
-    if ((FlatPtr)&end_of_kernel_image >= 0xc1000000u) {
+    if ((FlatPtr)&end_of_kernel_image >= 0xc2000000u) {
         // The kernel has grown too large again!
         asm volatile("cli;hlt");
     }
 
+    g_in_early_boot = true;
     setup_serial_debug();
 
     // We need to copy the command line before kmalloc is initialized,
@@ -144,6 +128,7 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     kmalloc_init();
     slab_alloc_init();
 
+    ConsoleDevice::initialize();
     s_bsp_processor.initialize(0);
 
     CommandLine::initialize();
@@ -162,8 +147,11 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     InterruptManagement::initialize();
     ACPI::initialize();
 
+    // Initialize the PCI Bus as early as possible, for early boot (PCI based) serial logging
+    PCI::initialize();
+    PCISerialDevice::detect();
+
     VFS::initialize();
-    Console::initialize();
 
     dmesgln("Starting SerenityOS...");
 
@@ -173,19 +161,16 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
 
     NullDevice::initialize();
     if (!get_serial_debug())
-        new SerialDevice(SERIAL_COM1_ADDR, 64);
-    new SerialDevice(SERIAL_COM2_ADDR, 65);
-    new SerialDevice(SERIAL_COM3_ADDR, 66);
-    new SerialDevice(SERIAL_COM4_ADDR, 67);
+        new SerialDevice(IOAddress(SERIAL_COM1_ADDR), 64);
+    new SerialDevice(IOAddress(SERIAL_COM2_ADDR), 65);
+    new SerialDevice(IOAddress(SERIAL_COM3_ADDR), 66);
+    new SerialDevice(IOAddress(SERIAL_COM4_ADDR), 67);
 
     VMWareBackdoor::the(); // don't wait until first mouse packet
     HIDManagement::initialize();
-    VirtualConsole::initialize();
-    tty0 = new VirtualConsole(0);
-    for (unsigned i = 1; i < s_max_virtual_consoles; i++) {
-        new VirtualConsole(i);
-    }
-    VirtualConsole::switch_to(0);
+
+    GraphicsManagement::the().initialize();
+    ConsoleManagement::the().initialize();
 
     Thread::initialize();
     Process::initialize();
@@ -250,36 +235,13 @@ void init_stage2(void*)
     SyncTask::spawn();
     FinalizerTask::spawn();
 
-    PCI::initialize();
     auto boot_profiling = kernel_command_line().is_boot_profiling_enabled();
-    auto is_text_mode = kernel_command_line().is_text_mode();
-    if (is_text_mode) {
-        dbgln("Text mode enabled");
-    } else {
-        bool bxvga_found = false;
-        PCI::enumerate([&](const PCI::Address&, PCI::ID id) {
-            if ((id.vendor_id == 0x1234 && id.device_id == 0x1111) || (id.vendor_id == 0x80ee && id.device_id == 0xbeef))
-                bxvga_found = true;
-        });
-
-        if (bxvga_found) {
-            BXVGADevice::initialize();
-        } else {
-            if (multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_RGB || multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT) {
-                new MBVGADevice(
-                    PhysicalAddress((u32)(multiboot_info_ptr->framebuffer_addr)),
-                    multiboot_info_ptr->framebuffer_pitch,
-                    multiboot_info_ptr->framebuffer_width,
-                    multiboot_info_ptr->framebuffer_height);
-            } else {
-                BXVGADevice::initialize();
-            }
-        }
-    }
 
     USB::UHCIController::detect();
 
     DMIExpose::initialize();
+
+    VirtIO::detect();
 
     E1000NetworkAdapter::detect();
     NE2000NetworkAdapter::detect();
@@ -311,10 +273,14 @@ void init_stage2(void*)
     // NOTE: Everything marked UNMAP_AFTER_INIT becomes inaccessible after this point.
     MM.unmap_memory_after_init();
 
+    // Switch out of early boot mode.
+    g_in_early_boot = false;
+
     int error;
 
     // FIXME: It would be nicer to set the mode from userspace.
-    tty0->set_graphical(!is_text_mode);
+    // FIXME: It would be smarter to not hardcode that the first tty is the only graphical one
+    ConsoleManagement::the().first_tty()->set_graphical(GraphicsManagement::the().framebuffer_devices_exist());
     RefPtr<Thread> thread;
     auto userspace_init = kernel_command_line().userspace_init();
     auto init_args = kernel_command_line().userspace_init_args();
@@ -326,7 +292,7 @@ void init_stage2(void*)
 
     if (boot_profiling) {
         dbgln("Starting full system boot profiling");
-        auto result = Process::current()->sys$profiling_enable(-1);
+        auto result = Process::current()->sys$profiling_enable(-1, ~0ull);
         VERIFY(!result.is_error());
     }
 

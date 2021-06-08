@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/NeverDestroyed.h>
@@ -31,7 +11,7 @@
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/Label.h>
-#include <LibGUI/MenuBar.h>
+#include <LibGUI/Menubar.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Window.h>
 #include <LibGUI/WindowServerConnection.h>
@@ -44,12 +24,16 @@ class Application::TooltipWindow final : public Window {
     C_OBJECT(TooltipWindow);
 
 public:
-    void set_tooltip(String tooltip)
+    void set_tooltip(const String& tooltip)
     {
-        // FIXME: Add some kind of GUI::Label auto-sizing feature.
-        int text_width = m_label->font().width(tooltip);
-        set_rect(rect().x(), rect().y(), text_width + 10, m_label->font().glyph_height() + 8);
-        m_label->set_text(move(tooltip));
+        m_label->set_text(Gfx::parse_ampersand_string(tooltip));
+        int tooltip_width = m_label->min_width() + 10;
+
+        Gfx::IntRect desktop_rect = Desktop::the().rect();
+        if (tooltip_width > desktop_rect.width())
+            tooltip_width = desktop_rect.width();
+
+        set_rect(rect().x(), rect().y(), tooltip_width, m_label->font().glyph_height() + 8);
     }
 
 private:
@@ -63,6 +47,7 @@ private:
         m_label->set_frame_thickness(1);
         m_label->set_frame_shape(Gfx::FrameShape::Container);
         m_label->set_frame_shadow(Gfx::FrameShadow::Plain);
+        m_label->set_autosize(true);
     }
 
     RefPtr<Label> m_label;
@@ -207,9 +192,9 @@ void Application::tooltip_show_timer_did_fire()
     Gfx::IntRect desktop_rect = Desktop::the().rect();
 
     const int margin = 30;
-    Gfx::IntPoint adjusted_pos = WindowServerConnection::the().send_sync<Messages::WindowServer::GetGlobalCursorPosition>()->position();
+    Gfx::IntPoint adjusted_pos = WindowServerConnection::the().get_global_cursor_position();
 
-    adjusted_pos.move_by(0, 18);
+    adjusted_pos.translate_by(0, 18);
 
     if (adjusted_pos.x() + m_tooltip_window->width() >= desktop_rect.width() - margin) {
         adjusted_pos = adjusted_pos.translated(-m_tooltip_window->width(), 0);
@@ -217,6 +202,8 @@ void Application::tooltip_show_timer_did_fire()
     if (adjusted_pos.y() + m_tooltip_window->height() >= desktop_rect.height() - margin) {
         adjusted_pos = adjusted_pos.translated(0, -(m_tooltip_window->height() * 2));
     }
+    if (adjusted_pos.x() < 0)
+        adjusted_pos.set_x(0);
 
     m_tooltip_window->move_to(adjusted_pos);
     m_tooltip_window->show();
@@ -277,6 +264,22 @@ void Application::set_drag_hovered_widget_impl(Widget* widget, const Gfx::IntPoi
 void Application::notify_drag_cancelled(Badge<WindowServerConnection>)
 {
     set_drag_hovered_widget_impl(nullptr);
+}
+
+void Application::event(Core::Event& event)
+{
+    if (event.type() == GUI::Event::ActionEnter || event.type() == GUI::Event::ActionLeave) {
+        auto& action_event = static_cast<ActionEvent&>(event);
+        auto& action = action_event.action();
+        if (action_event.type() == GUI::Event::ActionEnter) {
+            if (on_action_enter)
+                on_action_enter(action);
+        } else {
+            if (on_action_leave)
+                on_action_leave(action);
+        }
+    }
+    Object::event(event);
 }
 
 }

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -34,7 +14,7 @@
 
 namespace Kernel {
 
-class AnonymousVMObject : public VMObject {
+class AnonymousVMObject final : public VMObject {
     friend class PurgeablePageRanges;
 
 public:
@@ -42,8 +22,8 @@ public:
 
     static RefPtr<AnonymousVMObject> create_with_size(size_t, AllocationStrategy);
     static RefPtr<AnonymousVMObject> create_for_physical_range(PhysicalAddress paddr, size_t size);
-    static NonnullRefPtr<AnonymousVMObject> create_with_physical_page(PhysicalPage& page);
-    static NonnullRefPtr<AnonymousVMObject> create_with_physical_pages(NonnullRefPtrVector<PhysicalPage>);
+    static RefPtr<AnonymousVMObject> create_with_physical_page(PhysicalPage& page);
+    static RefPtr<AnonymousVMObject> create_with_physical_pages(NonnullRefPtrVector<PhysicalPage>);
     virtual RefPtr<VMObject> clone() override;
 
     RefPtr<PhysicalPage> allocate_committed_page(size_t);
@@ -60,7 +40,7 @@ public:
 
     bool is_any_volatile() const;
 
-    template<typename F>
+    template<IteratorFunction<const VolatilePageRange&> F>
     IterationDecision for_each_volatile_range(F f) const
     {
         VERIFY(m_lock.is_locked());
@@ -98,22 +78,40 @@ public:
         return IterationDecision::Continue;
     }
 
-    template<typename F>
+    template<IteratorFunction<const VolatilePageRange&> F>
     IterationDecision for_each_nonvolatile_range(F f) const
     {
         size_t base = 0;
         for_each_volatile_range([&](const VolatilePageRange& volatile_range) {
             if (volatile_range.base == base)
                 return IterationDecision::Continue;
-            IterationDecision decision = f({ base, volatile_range.base - base });
+            IterationDecision decision = f(VolatilePageRange { base, volatile_range.base - base });
             if (decision != IterationDecision::Continue)
                 return decision;
             base = volatile_range.base + volatile_range.count;
             return IterationDecision::Continue;
         });
         if (base < page_count())
-            return f({ base, page_count() - base });
+            return f(VolatilePageRange { base, page_count() - base });
         return IterationDecision::Continue;
+    }
+
+    template<VoidFunction<const VolatilePageRange&> F>
+    IterationDecision for_each_volatile_range(F f) const
+    {
+        return for_each_volatile_range([&](auto& range) {
+            f(range);
+            return IterationDecision::Continue;
+        });
+    }
+
+    template<VoidFunction<const VolatilePageRange&> F>
+    IterationDecision for_each_nonvolatile_range(F f) const
+    {
+        return for_each_nonvolatile_range([&](auto range) {
+            f(move(range));
+            return IterationDecision::Continue;
+        });
     }
 
 private:

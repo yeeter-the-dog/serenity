@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "PaletteWidget.h"
@@ -29,6 +9,8 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/ColorPicker.h>
 #include <LibGfx/Palette.h>
+
+REGISTER_WIDGET(PixelPaint, PaletteWidget);
 
 namespace PixelPaint {
 
@@ -40,6 +22,7 @@ public:
         : m_palette_widget(palette_widget)
         , m_color(color)
     {
+        set_fixed_width(16);
     }
 
     virtual ~ColorWidget() override
@@ -71,35 +54,24 @@ private:
     Color m_color;
 };
 
-PaletteWidget::PaletteWidget(ImageEditor& editor)
-    : m_editor(editor)
+PaletteWidget::PaletteWidget()
 {
     set_frame_shape(Gfx::FrameShape::Panel);
     set_frame_shadow(Gfx::FrameShadow::Raised);
     set_frame_thickness(0);
     set_fill_with_background_color(true);
 
-    set_fixed_height(34);
+    set_fixed_height(33);
 
     m_secondary_color_widget = add<GUI::Frame>();
-    m_secondary_color_widget->set_relative_rect({ 2, 2, 60, 31 });
+    m_secondary_color_widget->set_relative_rect({ 0, 2, 60, 31 });
     m_secondary_color_widget->set_fill_with_background_color(true);
-    set_secondary_color(m_editor.secondary_color());
 
     m_primary_color_widget = add<GUI::Frame>();
     Gfx::IntRect rect { 0, 0, 38, 15 };
     rect.center_within(m_secondary_color_widget->relative_rect());
     m_primary_color_widget->set_relative_rect(rect);
     m_primary_color_widget->set_fill_with_background_color(true);
-    set_primary_color(m_editor.primary_color());
-
-    m_editor.on_primary_color_change = [this](Color color) {
-        set_primary_color(color);
-    };
-
-    m_editor.on_secondary_color_change = [this](Color color) {
-        set_secondary_color(color);
-    };
 
     auto& color_container = add<GUI::Widget>();
     color_container.set_relative_rect(m_secondary_color_widget->relative_rect().right() + 2, 2, 500, 32);
@@ -153,13 +125,28 @@ PaletteWidget::PaletteWidget(ImageEditor& editor)
     add_color_widget(bottom_color_container, Color::from_rgb(0xff8040));
 }
 
+void PaletteWidget::set_image_editor(ImageEditor& editor)
+{
+    m_editor = &editor;
+    set_primary_color(editor.primary_color());
+    set_secondary_color(editor.secondary_color());
+
+    editor.on_primary_color_change = [this](Color color) {
+        set_primary_color(color);
+    };
+
+    editor.on_secondary_color_change = [this](Color color) {
+        set_secondary_color(color);
+    };
+}
+
 PaletteWidget::~PaletteWidget()
 {
 }
 
 void PaletteWidget::set_primary_color(Color color)
 {
-    m_editor.set_primary_color(color);
+    m_editor->set_primary_color(color);
     auto pal = m_primary_color_widget->palette();
     pal.set_color(ColorRole::Background, color);
     m_primary_color_widget->set_palette(pal);
@@ -168,7 +155,7 @@ void PaletteWidget::set_primary_color(Color color)
 
 void PaletteWidget::set_secondary_color(Color color)
 {
-    m_editor.set_secondary_color(color);
+    m_editor->set_secondary_color(color);
     auto pal = m_secondary_color_widget->palette();
     pal.set_color(ColorRole::Background, color);
     m_secondary_color_widget->set_palette(pal);

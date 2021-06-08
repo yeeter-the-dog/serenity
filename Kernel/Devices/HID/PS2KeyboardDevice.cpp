@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -35,7 +15,8 @@
 #include <Kernel/Devices/HID/HIDManagement.h>
 #include <Kernel/Devices/HID/PS2KeyboardDevice.h>
 #include <Kernel/IO.h>
-#include <Kernel/TTY/VirtualConsole.h>
+#include <Kernel/TTY/ConsoleManagement.h>
+#include <Kernel/WorkQueue.h>
 
 namespace Kernel {
 
@@ -51,6 +32,12 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
     if (byte == 0xe0) {
         m_has_e0_prefix = true;
         return;
+    }
+
+    if (m_modifiers == (Mod_Alt | Mod_Shift) && byte == 0x58) {
+        // Alt+Shift+F12 pressed, dump some kernel state to the debug console.
+        ConsoleManagement::the().switch_to_debug();
+        Scheduler::dump_scheduler_state();
     }
 
     dbgln_if(KEYBOARD_DEBUG, "Keyboard::irq_handle_byte_read: {:#02x} {}", ch, (pressed ? "down" : "up"));
@@ -69,7 +56,12 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
         break;
     case 0x2a:
     case 0x36:
-        update_modifier(Mod_Shift, pressed);
+        if (m_both_shift_keys_pressed)
+            m_both_shift_keys_pressed = false;
+        else if ((m_modifiers & Mod_Shift) != 0 && pressed)
+            m_both_shift_keys_pressed = true;
+        else
+            update_modifier(Mod_Shift, pressed);
         break;
     }
     switch (ch) {
@@ -78,8 +70,10 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
     default:
         if (m_modifiers & Mod_Alt) {
             switch (ch) {
-            case 0x02 ... 0x07: // 1 to 6
-                VirtualConsole::switch_to(ch - 0x02);
+            case 0x02 ... 0x01 + ConsoleManagement::s_max_virtual_consoles:
+                g_io_work->queue([this, ch]() {
+                    ConsoleManagement::the().switch_to(ch - 0x02);
+                });
                 break;
             default:
                 key_state_changed(ch, pressed);
@@ -100,7 +94,7 @@ void PS2KeyboardDevice::handle_irq(const RegisterState&)
 
 UNMAP_AFTER_INIT RefPtr<PS2KeyboardDevice> PS2KeyboardDevice::try_to_initialize(const I8042Controller& ps2_controller)
 {
-    auto device = adopt(*new PS2KeyboardDevice(ps2_controller));
+    auto device = adopt_ref(*new PS2KeyboardDevice(ps2_controller));
     if (device->initialize())
         return device;
     return nullptr;

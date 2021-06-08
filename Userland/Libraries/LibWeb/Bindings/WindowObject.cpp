@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Base64.h>
@@ -46,7 +26,8 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/Window.h>
 #include <LibWeb/Origin.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
+#include <LibWeb/WebAssembly/WebAssemblyObject.h>
 
 #include <LibWeb/Bindings/WindowObjectHelper.h>
 
@@ -67,7 +48,8 @@ void WindowObject::initialize_global_object()
     define_property("window", this, JS::Attribute::Enumerable);
     define_property("frames", this, JS::Attribute::Enumerable);
     define_property("self", this, JS::Attribute::Enumerable);
-    define_native_property("top", top_getter, JS::Attribute::Enumerable);
+    define_native_property("top", top_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("parent", parent_getter, nullptr, JS::Attribute::Enumerable);
     define_native_property("document", document_getter, nullptr, JS::Attribute::Enumerable);
     define_native_property("performance", performance_getter, nullptr, JS::Attribute::Enumerable);
     define_native_property("screen", screen_getter, nullptr, JS::Attribute::Enumerable);
@@ -90,6 +72,9 @@ void WindowObject::initialize_global_object()
 
     define_property("navigator", heap().allocate<NavigatorObject>(*this, *this), JS::Attribute::Enumerable | JS::Attribute::Configurable);
     define_property("location", heap().allocate<LocationObject>(*this, *this), JS::Attribute::Enumerable | JS::Attribute::Configurable);
+
+    // WebAssembly "namespace"
+    define_property("WebAssembly", heap().allocate<WebAssemblyObject>(*this, *this), JS::Attribute::Enumerable | JS::Attribute::Configurable);
 
     ADD_WINDOW_OBJECT_INTERFACES;
 }
@@ -354,16 +339,40 @@ JS_DEFINE_NATIVE_FUNCTION(WindowObject::btoa)
     return JS::js_string(vm, move(encoded));
 }
 
+// https://html.spec.whatwg.org/multipage/browsers.html#dom-top
 JS_DEFINE_NATIVE_GETTER(WindowObject::top_getter)
 {
     auto* impl = impl_from(vm, global_object);
     if (!impl)
         return {};
-    auto* this_frame = impl->document().frame();
-    VERIFY(this_frame);
-    VERIFY(this_frame->main_frame().document());
-    auto& top_window = this_frame->main_frame().document()->window();
+
+    auto* this_browsing_context = impl->document().browsing_context();
+    if (!this_browsing_context)
+        return JS::js_null();
+
+    VERIFY(this_browsing_context->top_level_browsing_context().document());
+    auto& top_window = this_browsing_context->top_level_browsing_context().document()->window();
     return top_window.wrapper();
+}
+
+// https://html.spec.whatwg.org/multipage/browsers.html#dom-parent
+JS_DEFINE_NATIVE_GETTER(WindowObject::parent_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+
+    auto* this_browsing_context = impl->document().browsing_context();
+    if (!this_browsing_context)
+        return JS::js_null();
+
+    if (this_browsing_context->parent()) {
+        VERIFY(this_browsing_context->parent()->document());
+        auto& parent_window = this_browsing_context->parent()->document()->window();
+        return parent_window.wrapper();
+    }
+    VERIFY(this_browsing_context == &this_browsing_context->top_level_browsing_context());
+    return impl->wrapper();
 }
 
 JS_DEFINE_NATIVE_GETTER(WindowObject::document_getter)

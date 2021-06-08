@@ -1,29 +1,10 @@
 /*
  * Copyright (c) 2020, Emanuel Sprung <emanuel.sprung@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
@@ -45,9 +26,9 @@ enum class BinaryFileMode {
 template<typename... Ts>
 void fail(StringView format, Ts... args)
 {
-    fprintf(stderr, "\x1b[31m");
+    warn("\x1b[31m");
     warnln(format, forward<Ts>(args)...);
-    fprintf(stderr, "\x1b[0m");
+    warn("\x1b[0m");
     abort();
 }
 
@@ -160,7 +141,7 @@ int main(int argc, char** argv)
 
     auto handle_file = [&matches, binary_mode](StringView filename, bool print_filename) -> bool {
         auto file = Core::File::construct(filename);
-        if (!file->open(Core::IODevice::ReadOnly)) {
+        if (!file->open(Core::OpenMode::ReadOnly)) {
             warnln("Failed to open {}: {}", filename, file->error_string());
             return false;
         }
@@ -196,7 +177,7 @@ int main(int argc, char** argv)
         ScopeGuard free_line = [line] { free(line); };
         while ((nread = getline(&line, &line_len, stdin)) != -1) {
             VERIFY(nread > 0);
-            StringView line_view(line, nread - 1);
+            StringView line_view(line, nread);
             bool is_binary = line_view.contains(0);
 
             if (is_binary && binary_mode == BinaryFileMode::Skip)

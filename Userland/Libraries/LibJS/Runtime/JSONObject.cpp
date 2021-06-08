@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020, Matthew Olsson <matthewcolsson@gmail.com>
- * All rights reserved.
+ * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -68,7 +48,7 @@ String JSONObject::stringify_impl(GlobalObject& global_object, Value value, Valu
     if (replacer.is_object()) {
         if (replacer.as_object().is_function()) {
             state.replacer_function = &replacer.as_function();
-        } else if (replacer.is_array()) {
+        } else if (replacer.is_array(global_object)) {
             auto& replacer_object = replacer.as_object();
             auto replacer_length = length_of_array_like(global_object, replacer_object);
             if (vm.exception())
@@ -97,6 +77,8 @@ String JSONObject::stringify_impl(GlobalObject& global_object, Value value, Valu
             }
             state.property_list = list;
         }
+        if (vm.exception())
+            return {};
     }
 
     if (space.is_object()) {
@@ -192,8 +174,10 @@ String JSONObject::serialize_json_property(GlobalObject& global_object, Stringif
         return "null";
     }
     if (value.is_object() && !value.is_function()) {
-        if (value.is_array())
+        if (value.is_array(global_object))
             return serialize_json_array(global_object, state, static_cast<Array&>(value.as_object()));
+        if (vm.exception())
+            return {};
         return serialize_json_object(global_object, state, value.as_object());
     }
     if (value.is_bigint())
@@ -215,6 +199,8 @@ String JSONObject::serialize_json_object(GlobalObject& global_object, StringifyS
     Vector<String> property_strings;
 
     auto process_property = [&](const PropertyName& key) {
+        if (key.is_symbol())
+            return;
         auto serialized_property_string = serialize_json_property(global_object, state, key, &object);
         if (vm.exception())
             return;
@@ -423,10 +409,8 @@ Value JSONObject::parse_json_value(GlobalObject& global_object, const JsonValue&
         return Value(parse_json_array(global_object, value.as_array()));
     if (value.is_null())
         return js_null();
-#if !defined(KERNEL)
     if (value.is_double())
         return Value(value.as_double());
-#endif
     if (value.is_number())
         return Value(value.to_i32(0));
     if (value.is_string())

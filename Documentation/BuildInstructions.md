@@ -40,31 +40,31 @@ Make sure you have all the dependencies installed (`ninja` is optional, but is f
 #### Debian / Ubuntu
 
 ```console
-sudo apt install build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-i386 qemu-utils
+sudo apt install build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-i386 qemu-utils ccache rsync
 ```
 
 #### Fedora
 
 ```console
-sudo dnf install curl cmake mpfr-devel libmpc-devel gmp-devel e2fsprogs ninja-build patch @"C Development Tools and Libraries" @Virtualization
+sudo dnf install binutils-devel curl cmake mpfr-devel libmpc-devel gmp-devel e2fsprogs ninja-build patch ccache rsync @"C Development Tools and Libraries" @Virtualization
 ```
 
 #### openSUSE
 
 ```console
-sudo zypper install curl cmake mpfr-devel mpc-devel ninja gmp-devel e2fsprogs patch qemu-x86 qemu-audio-pa gcc gcc-c++ patterns-devel-C-C++-devel_C_C++
+sudo zypper install curl cmake mpfr-devel mpc-devel ninja gmp-devel e2fsprogs patch qemu-x86 qemu-audio-pa gcc gcc-c++ ccache rsync patterns-devel-C-C++-devel_C_C++
 ```
 
 #### Arch Linux / Manjaro
 
 ```console
-sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu qemu-arch-extra
+sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu qemu-arch-extra ccache rsync
 ```
 
 #### ALT Linux
 
 ```console
-apt-get install curl cmake libmpc-devel gmp-devel e2fsprogs libmpfr-devel ninja-build patch gcc
+apt-get install curl cmake libmpc-devel gmp-devel e2fsprogs libmpfr-devel ninja-build patch gcc ccache rsync
 ```
 
 #### NixOS
@@ -88,6 +88,8 @@ stdenv.mkDerivation {
     libmpc
     e2fsprogs
     patch
+    ccache
+    rsync
 
     # Example Build-time Additional Dependencies
     pkgconfig
@@ -106,18 +108,39 @@ Then use this script: `nix-shell myshell.nix`.
 
 Once you're in nix-shell, you should be able to follow the build directions.
 
+#### Alpine Linux
+
+First, make sure you have enabled the `community` repository in `/etc/apk/repositories` and run `apk update`. It has been tested on `edge`, YMMV on `stable`.
+
+```console
+# the basics, if you have not already done so
+apk add bash curl git util-linux sudo
+
+# rough equivalent of build-essential
+apk add build-base
+
+# qemu
+apk add qemu qemu-system-i386 qemu-img qemu-ui-gtk
+
+# build tools (samurai is a drop-in replacement for ninja)
+apk add cmake e2fsprogs grub-bios samurai mpc1-dev mpfr-dev gmp-dev ccache rsync
+```
+
 ### macOS prerequisites
 
 Make sure you have all the dependencies installed:
 
 ```console
 # core
-brew install coreutils qemu bash gcc@10 ninja cmake
+brew install coreutils qemu bash gcc@10 ninja cmake ccache rsync
 
-# Fuse + ex2
-brew install osxfuse e2fsprogs m4 autoconf automake libtool
+# (option 1) fuse + ext2
+brew install e2fsprogs m4 autoconf automake libtool
 brew install --cask osxfuse
 Toolchain/BuildFuseExt2.sh
+
+# (option 2) genext2fs
+brew install genext2fs
 ```
 
 Notes:
@@ -153,7 +176,7 @@ Notes:
 ### OpenBSD prerequisites
 
 ```console
-$ doas pkg_add bash cmake g++ gcc git gmake gmp ninja
+$ doas pkg_add bash cmake g++ gcc git gmake gmp ninja ccache rsync
 ```
 
 To use `ninja image` and `ninja run`, you'll need Qemu and other utilities:
@@ -165,7 +188,7 @@ $ doas pkg_add coreutils qemu sudo
 ### FreeBSD prerequisites
 
 ```console
-$ pkg add bash coreutils git gmake ninja sudo
+$ pkg install bash coreutils git gmake ninja sudo gmp mpc mpfr ccache rsync
 ```
 
 ### Windows prerequisites
@@ -185,12 +208,15 @@ $ cd Toolchain
 $ ./BuildIt.sh
 ```
 
-Building the toolchain will also automatically create a `Build/i686/` directory for the build to live in.
-
-Once the toolchain has been built, go into the `Build/i686/` directory and run the commands. Note that while `ninja` seems to be faster, you can also just use GNU make, by omitting `-G Ninja` and calling `make` instead of `ninja`:
+Building the toolchain will also automatically create a `Build/i686/` directory for the build to live in. Once the toolchain has been built, go into the `Build/i686/` directory. Specifically, change the current directory to the `Build/` parent directory. To go there from `Toolchain/`, use this command:
 
 ```console
 $ cd ../Build/i686
+```
+
+Run the following commands from within the `Build/i686/` directory. Note that while `ninja` seems to be faster, you can also just use GNU make, by omitting `-G Ninja` and calling `make` instead of `ninja`:
+
+```console
 $ cmake ../.. -G Ninja
 $ ninja install
 ```
@@ -215,26 +241,55 @@ Outside of QEMU, Serenity will run on VirtualBox and VMware. If you're curious, 
 
 Later on, when you `git pull` to get the latest changes, there's (usually) no need to rebuild the toolchain. You can simply run `ninja install`, `ninja image`, and `ninja run` again. CMake will only rebuild those parts that have been updated.
 
+### CMake build options
+
+There are some optional features that can be enabled during compilation that are intended to help with specific types of development work or introduce experimental features. Currently, the following build options are available:
+- `ENABLE_ADDRESS_SANITIZER` and `ENABLE_KERNEL_ADDRESS_SANITIZER`: builds in runtime checks for memory corruption bugs (like buffer overflows and memory leaks) in Lagom test cases and the kernel, respectively.
+- `ENABLE_MEMORY_SANITIZER`: enables runtime checks for uninitialized memory accesses in Lagom test cases.
+- `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom test cases.
+- `ENABLE_FUZZER_SANITIZER`: builds [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
+- `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`: sets -Og and -ggdb3 compile options for building the Kernel. Allows for easier debugging of Kernel code. By default, the Kernel is built with -Os instead.
+- `ENABLE_ALL_THE_DEBUG_MACROS`: used for checking whether debug code compiles on CI. This should not be set normally, as it clutters the console output and makes the system run very slowly. Instead, enable only the needed debug macros, as described below.
+- `ENABLE_ALL_DEBUG_FACILITIES`: used for checking whether debug code compiles on CI. Enables both `ENABLE_ALL_THE_DEBUG_MACROS` and `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`.
+- `ENABLE_COMPILETIME_FORMAT_CHECK`: checks for the validity of `std::format`-style format string during compilation. Enabled by default.
+- `ENABLE_PCI_IDS_DOWNLOAD`: downloads the [`pci.ids` database](https://pci-ids.ucw.cz/) that contains information about PCI devices at build time, if not already present. Enabled by default.
+- `BUILD_LAGOM`: builds [Lagom](../Meta/Lagom/ReadMe.md), which makes various SerenityOS libraries and programs available on the host system.
+- `PRECOMPILE_COMMON_HEADERS`: precompiles some common headers to speedup compilation.
+- `ENABLE_KERNEL_LTO`: builds the kernel with link-time optimization.
+- `INCLUDE_WASM_SPEC_TESTS`: downloads and includes the WebAssembly spec testsuite tests
+
+Many parts of the SerenityOS codebase have debug functionality, mostly consisting of additional messages printed to the debug console. This is done via the `<component_name>_DEBUG` macros, which can be enabled individually at build time. They are listed in [this file](../Meta/CMake/all_the_debug_macros.cmake).
+
+To toggle a build option, add it to the `cmake` command invocation with a `-D` prefix. To enable it, add `=ON` at the end, or add `=OFF` to disable it. The complete command should look similarly to this:
+
+```console
+$ cmake ../.. -G Ninja -DPROCESS_DEBUG=ON -DENABLE_PCI_IDS_DOWNLOAD=OFF
+```
+
+For the changes to take effect, SerenityOS needs to be recompiled and the disk image needs to be rebuilt.
+
 ## Ports
 
 To add a package from the ports collection to Serenity, for example curl, go into `Ports/curl/` and run `./package.sh`. The sourcecode for the package will be downloaded and the package will be built. After that, rebuild the disk image. The next time you start Serenity, `curl` will be available.
 
+## Tests
+
+For information on running host and target tests, see [Running Tests](RunningTests.md). The documentation there explains the difference between host tests run with Lagom and
+target tests run on SerenityOS. It also contains useful information for debugging CI test failures.
+
 ## Customize disk image
 
-To add, modify or remove files of the disk image's file system, e.g. to change the default keyboard layout, you can create a file with the exact name `sync-local.sh` in the project root (the same directory as `.clang-format`), with content like this:
+To add, modify or remove files of the disk image's file system, e.g. to change the default keyboard layout, you can create a shell script with the name `sync-local.sh` in the project root, with content like this:
 
 ```sh
 #!/bin/sh
 
 set -e
 
-cat << 'EOF' >> mnt/etc/SystemServer.ini
-
-[keymap]
-Executable=/bin/keymap
-Arguments=de
-User=anon
+cat << 'EOF' > mnt/etc/Keyboard.ini
+[Mapping]
+Keymap=de
 EOF
 ```
 
-This will configure your keymap to German (`de`) instead of US English. See [`Base/res/keymaps/`](../Base/res/keymaps/) for a full list.
+This will configure your keymap to German (`de`) instead of US English. See [`Base/res/keymaps/`](../Base/res/keymaps/) for a full list. Note that the `keymap` program itself will also modify the `/etc/Keyboard.ini` config file, but this way the change will persist across image rebuilds.

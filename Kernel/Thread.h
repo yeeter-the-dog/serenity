@@ -1,37 +1,19 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/EnumBits.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/IntrusiveList.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
+#include <AK/SourceLocation.h>
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
@@ -47,6 +29,7 @@
 #include <Kernel/ThreadTracer.h>
 #include <Kernel/TimerQueue.h>
 #include <Kernel/UnixTypes.h>
+#include <Kernel/VM/Range.h>
 #include <LibC/fd_set.h>
 #include <LibC/signal_numbers.h>
 
@@ -88,7 +71,7 @@ class Thread
     friend class Process;
     friend class ProtectedProcessBase;
     friend class Scheduler;
-    friend class ThreadReadyQueue;
+    friend struct ThreadReadyQueue;
 
     static SpinLock<u8> g_tid_map_lock;
     static HashMap<ThreadID, Thread*>* g_tid_map;
@@ -578,7 +561,6 @@ public:
         const BlockFlags m_flags;
         BlockFlags& m_unblocked_flags;
         bool m_did_unblock { false };
-        bool m_should_block { true };
     };
 
     class AcceptBlocker final : public FileDescriptionBlocker {
@@ -763,6 +745,9 @@ public:
     RegisterState& get_register_dump_from_stack();
     const RegisterState& get_register_dump_from_stack() const { return const_cast<Thread*>(this)->get_register_dump_from_stack(); }
 
+    DebugRegisterState& debug_register_state() { return m_debug_register_state; }
+    const DebugRegisterState& debug_register_state() const { return m_debug_register_state; }
+
     TSS& tss() { return m_tss; }
     const TSS& tss() const { return m_tss; }
     State state() const { return m_state; }
@@ -807,7 +792,7 @@ public:
         // Relaxed semantics are fine for timeout_unblocked because we
         // synchronize on the spin locks already.
         Atomic<bool, AK::MemoryOrder::memory_order_relaxed> timeout_unblocked(false);
-        RefPtr<Timer> timer;
+        bool timer_was_added = false;
         {
             switch (state()) {
             case Thread::Stopped:
@@ -833,7 +818,7 @@ public:
             if (!block_timeout.is_infinite()) {
                 // Process::kill_all_threads may be called at any time, which will mark all
                 // threads to die. In that case
-                timer = TimerQueue::the().add_timer_without_id(block_timeout.clock_id(), block_timeout.absolute_time(), [&]() {
+                timer_was_added = TimerQueue::the().add_timer_without_id(*m_block_timer, block_timeout.clock_id(), block_timeout.absolute_time(), [&]() {
                     VERIFY(!Processor::current().in_irq());
                     VERIFY(!g_scheduler_lock.own_lock());
                     VERIFY(!m_block_lock.own_lock());
@@ -843,7 +828,7 @@ public:
                     if (m_blocker && timeout_unblocked.exchange(true) == false)
                         unblock();
                 });
-                if (!timer) {
+                if (!timer_was_added) {
                     // Timeout is already in the past
                     blocker.not_blocking(true);
                     m_blocker = nullptr;
@@ -906,11 +891,11 @@ public:
         // to clean up now while we're still holding m_lock
         auto result = blocker.end_blocking({}, did_timeout); // calls was_unblocked internally
 
-        if (timer && !did_timeout) {
+        if (timer_was_added && !did_timeout) {
             // Cancel the timer while not holding any locks. This allows
             // the timer function to complete before we remove it
             // (e.g. if it's on another processor)
-            TimerQueue::the().cancel_timer(timer.release_nonnull());
+            TimerQueue::the().cancel_timer(*m_block_timer);
         }
         if (previous_locked != LockMode::Unlocked) {
             // NOTE: this may trigger another call to Thread::block(), so
@@ -968,6 +953,9 @@ public:
     u32 signal_mask_block(sigset_t signal_set, bool block);
     u32 signal_mask() const;
     void clear_signals();
+
+    KResultOr<u32> peek_debug_register(u32 register_index);
+    KResult poke_debug_register(u32 register_index, u32 data);
 
     void set_dump_backtrace_on_finalization() { m_dump_backtrace_on_finalization = true; }
 
@@ -1058,9 +1046,14 @@ public:
 
     RefPtr<Thread> clone(Process&);
 
-    template<typename Callback>
+    template<IteratorFunction<Thread&> Callback>
     static IterationDecision for_each_in_state(State, Callback);
-    template<typename Callback>
+    template<IteratorFunction<Thread&> Callback>
+    static IterationDecision for_each(Callback);
+
+    template<VoidFunction<Thread&> Callback>
+    static IterationDecision for_each_in_state(State, Callback);
+    template<VoidFunction<Thread&> Callback>
     static IterationDecision for_each(Callback);
 
     static constexpr u32 default_kernel_stack_size = 65536;
@@ -1080,7 +1073,7 @@ public:
     RecursiveSpinLock& get_lock() const { return m_lock; }
 
 #if LOCK_DEBUG
-    void holding_lock(Lock& lock, int refs_delta, const char* file = nullptr, int line = 0)
+    void holding_lock(Lock& lock, int refs_delta, const SourceLocation& location)
     {
         VERIFY(refs_delta != 0);
         m_holding_locks.fetch_add(refs_delta, AK::MemoryOrder::memory_order_relaxed);
@@ -1096,7 +1089,7 @@ public:
                 }
             }
             if (!have_existing)
-                m_holding_locks_list.append({ &lock, file ? file : "unknown", line, 1 });
+                m_holding_locks_list.append({ &lock, location, 1 });
         } else {
             VERIFY(refs_delta < 0);
             bool found = false;
@@ -1125,11 +1118,26 @@ public:
         return m_handling_page_fault;
     }
     void set_handling_page_fault(bool b) { m_handling_page_fault = b; }
+    void set_idle_thread() { m_is_idle_thread = true; }
+    bool is_idle_thread() const { return m_is_idle_thread; }
+
+    ALWAYS_INLINE u32 enter_profiler()
+    {
+        return m_nested_profiler_calls.fetch_add(1, AK::MemoryOrder::memory_order_acq_rel);
+    }
+
+    ALWAYS_INLINE u32 leave_profiler()
+    {
+        return m_nested_profiler_calls.fetch_sub(1, AK::MemoryOrder::memory_order_acquire);
+    }
+
+    bool is_profiling_suppressed() const { return m_is_profiling_suppressed; }
+    void set_profiling_suppressed() { m_is_profiling_suppressed = true; }
 
 private:
-    Thread(NonnullRefPtr<Process>, NonnullOwnPtr<Region> kernel_stack_region);
+    Thread(NonnullRefPtr<Process>, NonnullOwnPtr<Region>, NonnullRefPtr<Timer>);
 
-    IntrusiveListNode m_process_thread_list_node;
+    IntrusiveListNode<Thread> m_process_thread_list_node;
     int m_runnable_priority { -1 };
 
     friend class WaitQueue;
@@ -1200,9 +1208,10 @@ private:
     NonnullRefPtr<Process> m_process;
     ThreadID m_tid { -1 };
     TSS m_tss {};
+    DebugRegisterState m_debug_register_state {};
     TrapFrame* m_current_trap { nullptr };
     u32 m_saved_critical { 1 };
-    IntrusiveListNode m_ready_queue_node;
+    IntrusiveListNode<Thread> m_ready_queue_node;
     Atomic<u32> m_cpu { 0 };
     u32 m_cpu_affinity { THREAD_AFFINITY_DEFAULT };
     u32 m_ticks_left { 0 };
@@ -1215,14 +1224,14 @@ private:
     u32 m_kernel_stack_top { 0 };
     OwnPtr<Region> m_kernel_stack_region;
     VirtualAddress m_thread_specific_data;
+    Optional<Range> m_thread_specific_range;
     Array<SignalActionData, NSIG> m_signal_action_data;
     Blocker* m_blocker { nullptr };
 
 #if LOCK_DEBUG
     struct HoldingLockInfo {
         Lock* lock;
-        const char* file;
-        int line;
+        SourceLocation source_location;
         unsigned count;
     };
     Atomic<u32> m_holding_locks { 0 };
@@ -1261,7 +1270,13 @@ private:
     bool m_should_die { false };
     bool m_initialized { false };
     bool m_in_block { false };
+    bool m_is_idle_thread { false };
     Atomic<bool> m_have_any_unmasked_pending_signals { false };
+    Atomic<u32> m_nested_profiler_calls { 0 };
+
+    RefPtr<Timer> m_block_timer;
+
+    bool m_is_profiling_suppressed { false };
 
     void yield_without_holding_big_lock();
     void donate_without_holding_big_lock(RefPtr<Thread>&, const char*);
@@ -1271,7 +1286,7 @@ private:
 
 AK_ENUM_BITWISE_OPERATORS(Thread::FileBlocker::BlockFlags);
 
-template<typename Callback>
+template<IteratorFunction<Thread&> Callback>
 inline IterationDecision Thread::for_each(Callback callback)
 {
     ScopedSpinLock lock(g_tid_map_lock);
@@ -1283,7 +1298,7 @@ inline IterationDecision Thread::for_each(Callback callback)
     return IterationDecision::Continue;
 }
 
-template<typename Callback>
+template<IteratorFunction<Thread&> Callback>
 inline IterationDecision Thread::for_each_in_state(State state, Callback callback)
 {
     ScopedSpinLock lock(g_tid_map_lock);
@@ -1296,6 +1311,24 @@ inline IterationDecision Thread::for_each_in_state(State state, Callback callbac
             return decision;
     }
     return IterationDecision::Continue;
+}
+
+template<VoidFunction<Thread&> Callback>
+inline IterationDecision Thread::for_each(Callback callback)
+{
+    ScopedSpinLock lock(g_tid_map_lock);
+    for (auto& it : *g_tid_map)
+        callback(*it.value);
+    return IterationDecision::Continue;
+}
+
+template<VoidFunction<Thread&> Callback>
+inline IterationDecision Thread::for_each_in_state(State state, Callback callback)
+{
+    return for_each_in_state(state, [&](auto& thread) {
+        callback(thread);
+        return IterationDecision::Continue;
+    });
 }
 
 }

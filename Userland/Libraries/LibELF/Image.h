@@ -1,35 +1,16 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <Kernel/VirtualAddress.h>
-#include <LibELF/exec_elf.h>
+#include <LibC/elf.h>
 
 namespace ELF {
 
@@ -134,8 +115,7 @@ public:
         u32 address() const { return m_section_header.sh_addr; }
         const char* raw_data() const { return m_image.raw_data(m_section_header.sh_offset); }
         ReadonlyBytes bytes() const { return { raw_data(), size() }; }
-        bool is_undefined() const { return m_section_index == SHN_UNDEF; }
-        RelocationSection relocations() const;
+        Optional<RelocationSection> relocations() const;
         u32 flags() const { return m_section_header.sh_flags; }
         bool is_writable() const { return flags() & SHF_WRITE; }
         bool is_executable() const { return flags() & PF_X; }
@@ -155,7 +135,8 @@ public:
         }
         unsigned relocation_count() const { return entry_count(); }
         Relocation relocation(unsigned index) const;
-        template<typename F>
+
+        template<VoidFunction<Image::Relocation&> F>
         void for_each_relocation(F) const;
     };
 
@@ -188,18 +169,27 @@ public:
     ProgramHeader program_header(unsigned) const;
     FlatPtr program_header_table_offset() const;
 
-    template<typename F>
+    template<IteratorFunction<Image::Section> F>
     void for_each_section(F) const;
-    template<typename F>
+    template<VoidFunction<Section> F>
+    void for_each_section(F) const;
+
+    template<IteratorFunction<Section&> F>
     void for_each_section_of_type(unsigned, F) const;
-    template<typename F>
+    template<VoidFunction<Section&> F>
+    void for_each_section_of_type(unsigned, F) const;
+
+    template<IteratorFunction<Symbol> F>
     void for_each_symbol(F) const;
-    template<typename F>
+    template<VoidFunction<Symbol> F>
+    void for_each_symbol(F) const;
+
+    template<IteratorFunction<ProgramHeader> F>
+    void for_each_program_header(F func) const;
+    template<VoidFunction<ProgramHeader> F>
     void for_each_program_header(F) const;
 
-    // NOTE: Returns section(0) if section with name is not found.
-    // FIXME: I don't love this API.
-    Section lookup_section(const String& name) const;
+    Optional<Section> lookup_section(StringView const& name) const;
 
     bool is_executable() const { return header().e_type == ET_EXEC; }
     bool is_relocatable() const { return header().e_type == ET_REL; }
@@ -209,7 +199,7 @@ public:
     FlatPtr base_address() const { return (FlatPtr)m_buffer; }
     size_t size() const { return m_size; }
 
-    Optional<Symbol> find_demangled_function(const String& name) const;
+    Optional<Symbol> find_demangled_function(const StringView& name) const;
 
     bool has_symbols() const { return symbol_count(); }
     String symbolicate(u32 address, u32* offset = nullptr) const;
@@ -239,18 +229,32 @@ private:
         Optional<Image::Symbol> symbol;
     };
 
+    void sort_symbols() const;
+    SortedSymbol* find_sorted_symbol(FlatPtr) const;
+
     mutable Vector<SortedSymbol> m_sorted_symbols;
 };
 
-template<typename F>
+template<IteratorFunction<Image::Section> F>
 inline void Image::for_each_section(F func) const
 {
     auto section_count = this->section_count();
-    for (unsigned i = 0; i < section_count; ++i)
-        func(section(i));
+    for (unsigned i = 0; i < section_count; ++i) {
+        if (func(section(i)) == IterationDecision::Break)
+            break;
+    }
 }
 
-template<typename F>
+template<VoidFunction<Image::Section> F>
+inline void Image::for_each_section(F func) const
+{
+    for_each_section([&](auto section) {
+        func(move(section));
+        return IterationDecision::Continue;
+    });
+}
+
+template<IteratorFunction<Image::Section&> F>
 inline void Image::for_each_section_of_type(unsigned type, F func) const
 {
     auto section_count = this->section_count();
@@ -263,17 +267,25 @@ inline void Image::for_each_section_of_type(unsigned type, F func) const
     }
 }
 
-template<typename F>
+template<VoidFunction<Image::Section&> F>
+inline void Image::for_each_section_of_type(unsigned type, F func) const
+{
+    for_each_section_of_type(type, [&](auto& section) {
+        func(section);
+        return IterationDecision::Continue;
+    });
+}
+
+template<VoidFunction<Image::Relocation&> F>
 inline void Image::RelocationSection::for_each_relocation(F func) const
 {
     auto relocation_count = this->relocation_count();
     for (unsigned i = 0; i < relocation_count; ++i) {
-        if (func(relocation(i)) == IterationDecision::Break)
-            break;
+        func(relocation(i));
     }
 }
 
-template<typename F>
+template<IteratorFunction<Image::Symbol> F>
 inline void Image::for_each_symbol(F func) const
 {
     auto symbol_count = this->symbol_count();
@@ -283,14 +295,32 @@ inline void Image::for_each_symbol(F func) const
     }
 }
 
-template<typename F>
+template<VoidFunction<Image::Symbol> F>
+inline void Image::for_each_symbol(F func) const
+{
+    for_each_symbol([&](auto symbol) {
+        func(move(symbol));
+        return IterationDecision::Continue;
+    });
+}
+
+template<IteratorFunction<Image::ProgramHeader> F>
 inline void Image::for_each_program_header(F func) const
 {
     auto program_header_count = this->program_header_count();
     for (unsigned i = 0; i < program_header_count; ++i) {
         if (func(program_header(i)) == IterationDecision::Break)
-            return;
+            break;
     }
+}
+
+template<VoidFunction<Image::ProgramHeader> F>
+inline void Image::for_each_program_header(F func) const
+{
+    for_each_program_header([&](auto header) {
+        func(move(header));
+        return IterationDecision::Continue;
+    });
 }
 
 } // end namespace ELF

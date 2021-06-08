@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
@@ -33,6 +13,7 @@
 #include <WindowServer/Event.h>
 #include <WindowServer/EventLoop.h>
 #include <WindowServer/Screen.h>
+#include <WindowServer/WMClientConnection.h>
 #include <WindowServer/WindowManager.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -46,16 +27,19 @@
 namespace WindowServer {
 
 EventLoop::EventLoop()
-    : m_server(Core::LocalServer::construct())
+    : m_window_server(Core::LocalServer::construct())
+    , m_wm_server(Core::LocalServer::construct())
 {
-    m_keyboard_fd = open("/dev/keyboard", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    m_mouse_fd = open("/dev/mouse", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_keyboard_fd = open("/dev/keyboard0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_mouse_fd = open("/dev/mouse0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 
-    bool ok = m_server->take_over_from_system_server();
+    bool ok = m_window_server->take_over_from_system_server("/tmp/portal/window");
+    VERIFY(ok);
+    ok = m_wm_server->take_over_from_system_server("/tmp/portal/wm");
     VERIFY(ok);
 
-    m_server->on_ready_to_accept = [this] {
-        auto client_socket = m_server->accept();
+    m_window_server->on_ready_to_accept = [this] {
+        auto client_socket = m_window_server->accept();
         if (!client_socket) {
             dbgln("WindowServer: accept failed.");
             return;
@@ -65,18 +49,29 @@ EventLoop::EventLoop()
         IPC::new_client_connection<ClientConnection>(client_socket.release_nonnull(), client_id);
     };
 
+    m_wm_server->on_ready_to_accept = [this] {
+        auto client_socket = m_wm_server->accept();
+        if (!client_socket) {
+            dbgln("WindowServer: WM accept failed.");
+            return;
+        }
+        static int s_next_wm_id = 0;
+        int wm_id = ++s_next_wm_id;
+        IPC::new_client_connection<WMClientConnection>(client_socket.release_nonnull(), wm_id);
+    };
+
     if (m_keyboard_fd >= 0) {
         m_keyboard_notifier = Core::Notifier::construct(m_keyboard_fd, Core::Notifier::Read);
         m_keyboard_notifier->on_ready_to_read = [this] { drain_keyboard(); };
     } else {
-        dbgln("Couldn't open /dev/keyboard");
+        dbgln("Couldn't open /dev/keyboard0");
     }
 
     if (m_mouse_fd >= 0) {
         m_mouse_notifier = Core::Notifier::construct(m_mouse_fd, Core::Notifier::Read);
         m_mouse_notifier->on_ready_to_read = [this] { drain_mouse(); };
     } else {
-        dbgln("Couldn't open /dev/mouse");
+        dbgln("Couldn't open /dev/mouse0");
     }
 }
 
@@ -102,9 +97,7 @@ void EventLoop::drain_mouse()
         return;
     for (size_t i = 0; i < npackets; ++i) {
         auto& packet = packets[i];
-#if WSMESSAGELOOP_DEBUG
-        dbgln("EventLoop: Mouse X {}, Y {}, Z {}, relative={}", packet.x, packet.y, packet.z, packet.is_relative);
-#endif
+        dbgln_if(WSMESSAGELOOP_DEBUG, "EventLoop: Mouse X {}, Y {}, Z {}, relative={}", packet.x, packet.y, packet.z, packet.is_relative);
         buttons = packet.buttons;
 
         state.is_relative = packet.is_relative;
@@ -120,9 +113,7 @@ void EventLoop::drain_mouse()
 
         if (buttons != state.buttons) {
             state.buttons = buttons;
-#if WSMESSAGELOOP_DEBUG
-            dbgln("EventLoop: Mouse Button Event");
-#endif
+            dbgln_if(WSMESSAGELOOP_DEBUG, "EventLoop: Mouse Button Event");
             screen.on_receive_mouse_data(state);
             if (state.is_relative) {
                 state.x = 0;

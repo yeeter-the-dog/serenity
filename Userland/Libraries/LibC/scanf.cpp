@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2021, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -71,7 +51,7 @@ enum class ReadKind {
 };
 
 template<typename T, typename ApT, ReadKind kind = ReadKind::Normal>
-struct read_element_concrete {
+struct ReadElementConcrete {
     bool operator()(GenericLexer&, va_list)
     {
         return false;
@@ -79,12 +59,12 @@ struct read_element_concrete {
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<int, ApT, kind> {
+struct ReadElementConcrete<int, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
         long value = 0;
         char* endptr = nullptr;
         auto nptr = lexer.remaining().characters_without_null_termination();
@@ -107,35 +87,37 @@ struct read_element_concrete<int, ApT, kind> {
         VERIFY(diff > 0);
         lexer.ignore((size_t)diff);
 
-        *ptr = value;
+        if (ptr)
+            *ptr = value;
         return true;
     }
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<char, ApT, kind> {
+struct ReadElementConcrete<char, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         static_assert(kind == ReadKind::Normal, "Can't read a non-normal character");
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
 
         if (lexer.is_eof())
             return false;
 
         auto ch = lexer.consume();
-        *ptr = ch;
+        if (ptr)
+            *ptr = ch;
         return true;
     }
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<unsigned, ApT, kind> {
+struct ReadElementConcrete<unsigned, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
         unsigned long value = 0;
         char* endptr = nullptr;
         auto nptr = lexer.remaining().characters_without_null_termination();
@@ -158,18 +140,19 @@ struct read_element_concrete<unsigned, ApT, kind> {
         VERIFY(diff > 0);
         lexer.ignore((size_t)diff);
 
-        *ptr = value;
+        if (ptr)
+            *ptr = value;
         return true;
     }
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<long long, ApT, kind> {
+struct ReadElementConcrete<long long, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
         long long value = 0;
         char* endptr = nullptr;
         auto nptr = lexer.remaining().characters_without_null_termination();
@@ -192,18 +175,19 @@ struct read_element_concrete<long long, ApT, kind> {
         VERIFY(diff > 0);
         lexer.ignore((size_t)diff);
 
-        *ptr = value;
+        if (ptr)
+            *ptr = value;
         return true;
     }
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<unsigned long long, ApT, kind> {
+struct ReadElementConcrete<unsigned long long, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
         unsigned long long value = 0;
         char* endptr = nullptr;
         auto nptr = lexer.remaining().characters_without_null_termination();
@@ -226,18 +210,19 @@ struct read_element_concrete<unsigned long long, ApT, kind> {
         VERIFY(diff > 0);
         lexer.ignore((size_t)diff);
 
-        *ptr = value;
+        if (ptr)
+            *ptr = value;
         return true;
     }
 };
 
 template<typename ApT, ReadKind kind>
-struct read_element_concrete<float, ApT, kind> {
+struct ReadElementConcrete<float, ApT, kind> {
     bool operator()(GenericLexer& lexer, va_list* ap)
     {
         lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, ApT*);
+        auto* ptr = ap ? va_arg(*ap, ApT*) : nullptr;
 
         double value = 0;
         char* endptr = nullptr;
@@ -257,13 +242,14 @@ struct read_element_concrete<float, ApT, kind> {
         VERIFY(diff > 0);
         lexer.ignore((size_t)diff);
 
-        *ptr = value;
+        if (ptr)
+            *ptr = value;
         return true;
     }
 };
 
 template<typename T, ReadKind kind>
-struct read_element {
+struct ReadElement {
     bool operator()(LengthModifier length_modifier, GenericLexer& input_lexer, va_list* ap)
     {
         switch (length_modifier) {
@@ -271,42 +257,42 @@ struct read_element {
         case None:
             VERIFY_NOT_REACHED();
         case Default:
-            return read_element_concrete<T, T, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, T, kind> {}(input_lexer, ap);
         case Char:
-            return read_element_concrete<T, char, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, char, kind> {}(input_lexer, ap);
         case Short:
-            return read_element_concrete<T, short, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, short, kind> {}(input_lexer, ap);
         case Long:
-            if constexpr (IsSame<T, int>::value)
-                return read_element_concrete<T, long, kind> {}(input_lexer, ap);
-            if constexpr (IsSame<T, unsigned>::value)
-                return read_element_concrete<T, unsigned, kind> {}(input_lexer, ap);
-            if constexpr (IsSame<T, float>::value)
-                return read_element_concrete<int, double, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, int>)
+                return ReadElementConcrete<T, long, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, unsigned>)
+                return ReadElementConcrete<T, unsigned, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, float>)
+                return ReadElementConcrete<int, double, kind> {}(input_lexer, ap);
             return false;
         case LongLong:
-            if constexpr (IsSame<T, int>::value)
-                return read_element_concrete<long long, long long, kind> {}(input_lexer, ap);
-            if constexpr (IsSame<T, unsigned>::value)
-                return read_element_concrete<unsigned long long, unsigned long long, kind> {}(input_lexer, ap);
-            if constexpr (IsSame<T, float>::value)
-                return read_element_concrete<long long, double, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, int>)
+                return ReadElementConcrete<long long, long long, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, unsigned>)
+                return ReadElementConcrete<unsigned long long, unsigned long long, kind> {}(input_lexer, ap);
+            if constexpr (IsSame<T, float>)
+                return ReadElementConcrete<long long, double, kind> {}(input_lexer, ap);
             return false;
         case IntMax:
-            return read_element_concrete<T, intmax_t, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, intmax_t, kind> {}(input_lexer, ap);
         case Size:
-            return read_element_concrete<T, size_t, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, size_t, kind> {}(input_lexer, ap);
         case PtrDiff:
-            return read_element_concrete<T, ptrdiff_t, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, ptrdiff_t, kind> {}(input_lexer, ap);
         case LongDouble:
-            return read_element_concrete<T, long double, kind> {}(input_lexer, ap);
+            return ReadElementConcrete<T, long double, kind> {}(input_lexer, ap);
         }
     }
 };
 
 template<>
-struct read_element<char*, ReadKind::Normal> {
-    read_element(StringView scan_set = {}, bool invert = false)
+struct ReadElement<char*, ReadKind::Normal> {
+    ReadElement(StringView scan_set = {}, bool invert = false)
         : scan_set(scan_set.is_null() ? " \t\n\f\r" : scan_set)
         , invert(scan_set.is_null() ? true : invert)
         , was_null(scan_set.is_null())
@@ -322,7 +308,7 @@ struct read_element<char*, ReadKind::Normal> {
         if (was_null)
             input_lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, char*);
+        auto* ptr = ap ? va_arg(*ap, char*) : nullptr;
         auto str = input_lexer.consume_while([this](auto c) { return this->matches(c); });
         if (str.is_empty())
             return false;
@@ -345,7 +331,7 @@ private:
 };
 
 template<>
-struct read_element<void*, ReadKind::Normal> {
+struct ReadElement<void*, ReadKind::Normal> {
     bool operator()(LengthModifier length_modifier, GenericLexer& input_lexer, va_list* ap)
     {
         if (length_modifier != LengthModifier::Default)
@@ -353,7 +339,7 @@ struct read_element<void*, ReadKind::Normal> {
 
         input_lexer.ignore_while(isspace);
 
-        auto* ptr = va_arg(*ap, void**);
+        auto* ptr = ap ? va_arg(*ap, void**) : nullptr;
         auto str = input_lexer.consume_while([this](auto c) { return this->should_consume(c); });
 
         if (count != 8) {
@@ -417,6 +403,12 @@ extern "C" int vsscanf(const char* input, const char* format, va_list ap)
         }
 
         format_lexer.ignore(); // '%'
+
+        bool suppress_assignment = false;
+        if (format_lexer.next_is('*')) {
+            suppress_assignment = true;
+            format_lexer.ignore();
+        }
 
         // Parse width specification
         [[maybe_unused]] int width_specifier = 0;
@@ -545,6 +537,8 @@ extern "C" int vsscanf(const char* input, const char* format, va_list ap)
             }
         }
 
+        auto* ap_or_null = !suppress_assignment ? (va_list*)&ap : nullptr;
+
         // Now try to read.
         switch (conversion_specifier) {
         case Invalid:
@@ -554,69 +548,70 @@ extern "C" int vsscanf(const char* input, const char* format, va_list ap)
             dbgln("Invalid conversion specifier {} in scanf!", (int)conversion_specifier);
             VERIFY_NOT_REACHED();
         case Decimal:
-            if (!read_element<int, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<int, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Integer:
-            if (!read_element<int, ReadKind::Infer> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<int, ReadKind::Infer> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Octal:
-            if (!read_element<unsigned, ReadKind::Octal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<unsigned, ReadKind::Octal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Unsigned:
-            if (!read_element<unsigned, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<unsigned, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Hex:
-            if (!read_element<unsigned, ReadKind::Hex> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<unsigned, ReadKind::Hex> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Floating:
-            if (!read_element<float, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<float, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case String:
-            if (!read_element<char*, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<char*, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case UseScanList:
-            if (!read_element<char*, ReadKind::Normal> { scanlist, invert_scanlist }(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<char*, ReadKind::Normal> { scanlist, invert_scanlist }(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Character:
-            if (!read_element<char, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<char, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case Pointer:
-            if (!read_element<void*, ReadKind::Normal> {}(length_modifier, input_lexer, (va_list*)&ap))
+            if (!ReadElement<void*, ReadKind::Normal> {}(length_modifier, input_lexer, ap_or_null))
                 format_lexer.consume_all();
             else
                 ++elements_matched;
             break;
         case OutputNumberOfBytes: {
-            auto* ptr = va_arg(ap, int*);
-            *ptr = input_lexer.tell();
-            ++elements_matched;
+            if (!suppress_assignment) {
+                auto* ptr = va_arg(ap, int*);
+                *ptr = input_lexer.tell();
+            }
             break;
         }
         }

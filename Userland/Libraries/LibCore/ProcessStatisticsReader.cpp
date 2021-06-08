@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/ByteBuffer.h>
@@ -31,28 +11,27 @@
 #include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <pwd.h>
-#include <stdio.h>
 
 namespace Core {
 
 HashMap<uid_t, String> ProcessStatisticsReader::s_usernames;
 
-Optional<HashMap<pid_t, Core::ProcessStatistics>> ProcessStatisticsReader::get_all(RefPtr<Core::File>& proc_all_file)
+Optional<Vector<Core::ProcessStatistics>> ProcessStatisticsReader::get_all(RefPtr<Core::File>& proc_all_file)
 {
     if (proc_all_file) {
-        if (!proc_all_file->seek(0, Core::File::SeekMode::SetPosition)) {
-            fprintf(stderr, "ProcessStatisticsReader: Failed to refresh /proc/all: %s\n", proc_all_file->error_string());
+        if (!proc_all_file->seek(0, Core::SeekMode::SetPosition)) {
+            warnln("ProcessStatisticsReader: Failed to refresh /proc/all: {}", proc_all_file->error_string());
             return {};
         }
     } else {
         proc_all_file = Core::File::construct("/proc/all");
-        if (!proc_all_file->open(Core::IODevice::ReadOnly)) {
-            fprintf(stderr, "ProcessStatisticsReader: Failed to open /proc/all: %s\n", proc_all_file->error_string());
+        if (!proc_all_file->open(Core::OpenMode::ReadOnly)) {
+            warnln("ProcessStatisticsReader: Failed to open /proc/all: {}", proc_all_file->error_string());
             return {};
         }
     }
 
-    HashMap<pid_t, Core::ProcessStatistics> map;
+    Vector<Core::ProcessStatistics> processes;
 
     auto file_contents = proc_all_file->read_all();
     auto json = JsonValue::from_string(file_contents);
@@ -113,13 +92,13 @@ Optional<HashMap<pid_t, Core::ProcessStatistics>> ProcessStatisticsReader::get_a
 
         // and synthetic data last
         process.username = username_from_uid(process.uid);
-        map.set(process.pid, process);
+        processes.append(move(process));
     });
 
-    return map;
+    return processes;
 }
 
-Optional<HashMap<pid_t, Core::ProcessStatistics>> ProcessStatisticsReader::get_all()
+Optional<Vector<Core::ProcessStatistics>> ProcessStatisticsReader::get_all()
 {
     RefPtr<Core::File> proc_all_file;
     return get_all(proc_all_file);

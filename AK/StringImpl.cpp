@@ -1,51 +1,16 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Debug.h>
 #include <AK/FlyString.h>
 #include <AK/HashTable.h>
 #include <AK/Memory.h>
 #include <AK/StdLibExtras.h>
+#include <AK/StringHash.h>
 #include <AK/StringImpl.h>
 #include <AK/kmalloc.h>
-
-#if STRINGIMPL_DEBUG
-unsigned g_stringimpl_count;
-static HashTable<StringImpl*>* g_all_live_stringimpls;
-
-void dump_all_stringimpls();
-void dump_all_stringimpls()
-{
-    unsigned i = 0;
-    for (auto& it : *g_all_live_stringimpls) {
-        dbgln("{}: \"{}\"", i, *it);
-        ++i;
-    }
-}
-#endif
 
 namespace AK {
 
@@ -63,22 +28,12 @@ StringImpl& StringImpl::the_empty_stringimpl()
 StringImpl::StringImpl(ConstructWithInlineBufferTag, size_t length)
     : m_length(length)
 {
-#if STRINGIMPL_DEBUG
-    if (!g_all_live_stringimpls)
-        g_all_live_stringimpls = new HashTable<StringImpl*>;
-    ++g_stringimpl_count;
-    g_all_live_stringimpls->set(this);
-#endif
 }
 
 StringImpl::~StringImpl()
 {
     if (m_fly)
         FlyString::did_destroy_impl({}, *this);
-#if STRINGIMPL_DEBUG
-    --g_stringimpl_count;
-    g_all_live_stringimpls->remove(this);
-#endif
 }
 
 static inline size_t allocation_size_for_stringimpl(size_t length)
@@ -91,7 +46,7 @@ NonnullRefPtr<StringImpl> StringImpl::create_uninitialized(size_t length, char*&
     VERIFY(length);
     void* slot = kmalloc(allocation_size_for_stringimpl(length));
     VERIFY(slot);
-    auto new_stringimpl = adopt(*new (slot) StringImpl(ConstructWithInlineBuffer, length));
+    auto new_stringimpl = adopt_ref(*new (slot) StringImpl(ConstructWithInlineBuffer, length));
     buffer = const_cast<char*>(new_stringimpl->characters());
     buffer[length] = '\0';
     return new_stringimpl;

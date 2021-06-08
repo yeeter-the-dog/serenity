@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -35,20 +15,20 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#define EXPECT_ERROR_2(err, syscall, arg1, arg2)                                                                                                                          \
-    do {                                                                                                                                                                  \
-        rc = syscall(arg1, arg2);                                                                                                                                         \
-        if (rc >= 0 || errno != err) {                                                                                                                                    \
-            fprintf(stderr, __FILE__ ":%d: Expected " #err ": " #syscall "(%p, %p), got rc=%d, errno=%d\n", __LINE__, (const void*)(arg1), (const void*)arg2, rc, errno); \
-        }                                                                                                                                                                 \
+#define EXPECT_ERROR_2(err, syscall, arg1, arg2)                                                                                                                   \
+    do {                                                                                                                                                           \
+        rc = syscall(arg1, arg2);                                                                                                                                  \
+        if (rc >= 0 || errno != err) {                                                                                                                             \
+            warnln(__FILE__ ":{}: Expected " #err ": " #syscall "({:p}, {:p}), got rc={}, errno={}", __LINE__, (const void*)(arg1), (const void*)arg2, rc, errno); \
+        }                                                                                                                                                          \
     } while (0)
 
-#define EXPECT_ERROR_3(err, syscall, arg1, arg2, arg3)                                                                                                                                               \
-    do {                                                                                                                                                                                             \
-        rc = syscall(arg1, arg2, arg3);                                                                                                                                                              \
-        if (rc >= 0 || errno != err) {                                                                                                                                                               \
-            fprintf(stderr, __FILE__ ":%d: Expected " #err ": " #syscall "(%p, %p, %p), got rc=%d, errno=%d\n", __LINE__, (const void*)(arg1), (const void*)(arg2), (const void*)(arg3), rc, errno); \
-        }                                                                                                                                                                                            \
+#define EXPECT_ERROR_3(err, syscall, arg1, arg2, arg3)                                                                                                                                          \
+    do {                                                                                                                                                                                        \
+        rc = syscall(arg1, arg2, arg3);                                                                                                                                                         \
+        if (rc >= 0 || errno != err) {                                                                                                                                                          \
+            warnln(__FILE__ ":{}: Expected " #err ": " #syscall "({:p}, {:p}, {:p}), got rc={}, errno={}", __LINE__, (const void*)(arg1), (const void*)(arg2), (const void*)(arg3), rc, errno); \
+        }                                                                                                                                                                                       \
     } while (0)
 
 static void test_read_from_directory()
@@ -112,7 +92,7 @@ static void test_read_past_eof()
     if (rc < 0)
         perror("read");
     if (rc > 0)
-        fprintf(stderr, "read %d bytes past EOF\n", rc);
+        warnln("read {} bytes past EOF", rc);
     rc = close(fd);
     VERIFY(rc == 0);
 }
@@ -141,11 +121,11 @@ static void test_mmap_directory()
     VERIFY(fd >= 0);
     auto* ptr = mmap(nullptr, 4096, PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
     if (ptr != MAP_FAILED) {
-        fprintf(stderr, "Boo! mmap() of a directory succeeded!\n");
+        warnln("Boo! mmap() of a directory succeeded!");
         return;
     }
     if (errno != ENODEV) {
-        fprintf(stderr, "Boo! mmap() of a directory gave errno=%d instead of ENODEV!\n", errno);
+        warnln("Boo! mmap() of a directory gave errno={} instead of ENODEV!", errno);
         return;
     }
     close(fd);
@@ -165,7 +145,7 @@ static void test_tmpfs_read_past_end()
     char buffer[16];
     int nread = read(fd, buffer, sizeof(buffer));
     if (nread != 0) {
-        fprintf(stderr, "Expected 0-length read past end of file in /tmp\n");
+        warnln("Expected 0-length read past end of file in /tmp");
     }
     close(fd);
 }
@@ -181,7 +161,7 @@ static void test_procfs_read_past_end()
     char buffer[16];
     int nread = read(fd, buffer, sizeof(buffer));
     if (nread != 0) {
-        fprintf(stderr, "Expected 0-length read past end of file in /proc\n");
+        warnln("Expected 0-length read past end of file in /proc");
     }
     close(fd);
 }
@@ -198,7 +178,7 @@ static void test_open_create_device()
     }
 
     if (st.st_mode != 0100600) {
-        fprintf(stderr, "Expected mode 0100600 after attempt to create a device node with open(O_CREAT), mode=%o\n", st.st_mode);
+        warnln("Expected mode 0100600 after attempt to create a device node with open(O_CREAT), mode={:o}", st.st_mode);
     }
     unlink("/tmp/fakedevice");
     close(fd);
@@ -218,7 +198,7 @@ static void test_unlink_symlink()
     rc = unlink("/tmp/linky");
     if (rc < 0) {
         perror("unlink");
-        fprintf(stderr, "Expected unlink() of a symlink into an unreadable directory to succeed!\n");
+        warnln("Expected unlink() of a symlink into an unreadable directory to succeed!");
     }
 }
 
@@ -233,11 +213,11 @@ static void test_eoverflow()
     char buffer[16];
     rc = read(fd, buffer, sizeof(buffer));
     if (rc >= 0 || errno != EOVERFLOW) {
-        fprintf(stderr, "Expected EOVERFLOW when trying to read past INT32_MAX\n");
+        warnln("Expected EOVERFLOW when trying to read past INT32_MAX");
     }
     rc = write(fd, buffer, sizeof(buffer));
     if (rc >= 0 || errno != EOVERFLOW) {
-        fprintf(stderr, "Expected EOVERFLOW when trying to write past INT32_MAX\n");
+        warnln("Expected EOVERFLOW when trying to write past INT32_MAX");
     }
     close(fd);
 }
@@ -255,7 +235,7 @@ static void test_rmdir_while_inside_dir()
 
     int fd = open("x", O_CREAT | O_RDWR, 0600);
     if (fd >= 0 || errno != ENOENT) {
-        fprintf(stderr, "Expected ENOENT when trying to create a file inside a deleted directory. Got %d with errno=%d\n", fd, errno);
+        warnln("Expected ENOENT when trying to create a file inside a deleted directory. Got {} with errno={}", fd, errno);
     }
 
     rc = chdir("/home/anon");
@@ -278,14 +258,14 @@ static void test_writev()
         VERIFY_NOT_REACHED();
     }
     if (nwritten != 12) {
-        fprintf(stderr, "Didn't write 12 bytes to pipe with writev\n");
+        warnln("Didn't write 12 bytes to pipe with writev");
         VERIFY_NOT_REACHED();
     }
 
     char buffer[32];
     int nread = read(pipefds[0], buffer, sizeof(buffer));
     if (nread != 12 || memcmp(buffer, "HelloFriends", 12)) {
-        fprintf(stderr, "Didn't read the expected data from pipe after writev\n");
+        warnln("Didn't read the expected data from pipe after writev");
         VERIFY_NOT_REACHED();
     }
 

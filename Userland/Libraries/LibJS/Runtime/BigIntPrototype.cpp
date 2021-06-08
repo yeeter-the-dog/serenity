@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Function.h>
@@ -53,24 +33,25 @@ BigIntPrototype::~BigIntPrototype()
 {
 }
 
-static BigIntObject* bigint_object_from(VM& vm, GlobalObject& global_object)
+// thisBigIntValue, https://tc39.es/ecma262/#thisbigintvalue
+static Value this_bigint_value(GlobalObject& global_object, Value value)
 {
-    auto* this_object = vm.this_value(global_object).to_object(global_object);
-    if (!this_object)
-        return nullptr;
-    if (!is<BigIntObject>(this_object)) {
-        vm.throw_exception<TypeError>(global_object, ErrorType::NotA, "BigInt");
-        return nullptr;
-    }
-    return static_cast<BigIntObject*>(this_object);
+    if (value.is_bigint())
+        return value;
+    if (value.is_object() && is<BigIntObject>(value.as_object()))
+        return static_cast<BigIntObject&>(value.as_object()).value_of();
+    auto& vm = global_object.vm();
+    vm.throw_exception<TypeError>(global_object, ErrorType::NotA, "BigInt");
+    return {};
 }
 
 JS_DEFINE_NATIVE_FUNCTION(BigIntPrototype::to_string)
 {
-    auto* bigint_object = bigint_object_from(vm, global_object);
-    if (!bigint_object)
+    auto bigint_value = this_bigint_value(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    return js_string(vm, bigint_object->bigint().big_integer().to_base10());
+    // FIXME: Support radix argument
+    return js_string(vm, bigint_value.as_bigint().big_integer().to_base10());
 }
 
 JS_DEFINE_NATIVE_FUNCTION(BigIntPrototype::to_locale_string)
@@ -80,10 +61,7 @@ JS_DEFINE_NATIVE_FUNCTION(BigIntPrototype::to_locale_string)
 
 JS_DEFINE_NATIVE_FUNCTION(BigIntPrototype::value_of)
 {
-    auto* bigint_object = bigint_object_from(vm, global_object);
-    if (!bigint_object)
-        return {};
-    return bigint_object->value_of();
+    return this_bigint_value(global_object, vm.this_value(global_object));
 }
 
 }

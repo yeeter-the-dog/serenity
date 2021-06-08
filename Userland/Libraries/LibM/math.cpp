@@ -1,30 +1,11 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mițca Dumitru <dumitru0mitca@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ExtraMathConstants.h>
 #include <AK/Platform.h>
 #include <AK/StdLibExtras.h>
 #include <LibC/assert.h>
@@ -172,9 +153,9 @@ static FloatType internal_to_integer(FloatType x, RoundingMode rounding_mode)
         // We could do this ourselves, but this saves us from manually
         // handling overflow.
         if (extractor.sign)
-            extractor.d -= 1.0;
+            extractor.d -= static_cast<FloatType>(1.0);
         else
-            extractor.d += 1.0;
+            extractor.d += static_cast<FloatType>(1.0);
     }
 
     return extractor.d;
@@ -339,7 +320,7 @@ static FloatT internal_gamma(FloatT x) NOEXCEPT
     }
 
     // Stirling approximation
-    return sqrtl(2.0 * M_PI / x) * powl(x / M_E, x);
+    return sqrtl(2.0 * M_PI / static_cast<long double>(x)) * powl(static_cast<long double>(x) / M_E, static_cast<long double>(x));
 }
 
 extern "C" {
@@ -386,7 +367,7 @@ double cos(double angle) NOEXCEPT
 
 float cosf(float angle) NOEXCEPT
 {
-    return sinf(angle + M_PI_2);
+    return sinf(angle + static_cast<float>(M_PI_2));
 }
 
 long double sinl(long double angle) NOEXCEPT
@@ -495,7 +476,7 @@ float tanhf(float x) NOEXCEPT
     return (float)tanhl(x);
 }
 
-static long double ampsin(long double angle) NOEXCEPT
+[[maybe_unused]] static long double ampsin(long double angle) NOEXCEPT
 {
     long double looped_angle = fmodl(M_PI + angle, M_TAU) - M_PI;
     long double looped_angle_squared = looped_angle * looped_angle;
@@ -514,7 +495,13 @@ static long double ampsin(long double angle) NOEXCEPT
 
 long double tanl(long double angle) NOEXCEPT
 {
-    return ampsin(angle) / ampsin(M_PI_2 + angle);
+    long double ret = 0.0, one;
+    __asm__(
+        "fptan"
+        : "=t"(one), "=u"(ret)
+        : "0"(angle));
+
+    return ret;
 }
 
 double tan(double angle) NOEXCEPT
@@ -630,7 +617,7 @@ double fmod(double index, double period) NOEXCEPT
 
 float fmodf(float index, float period) NOEXCEPT
 {
-    return index - trunc(index / period) * period;
+    return index - truncf(index / period) * period;
 }
 
 // FIXME: These aren't exactly like fmod, but these definitions are probably good enough for now
@@ -721,8 +708,6 @@ float coshf(float x) NOEXCEPT
 
 long double atan2l(long double y, long double x) NOEXCEPT
 {
-    if (x > 0)
-        return atanl(y / x);
     if (x == 0) {
         if (y > 0)
             return M_PI_2;
@@ -730,9 +715,13 @@ long double atan2l(long double y, long double x) NOEXCEPT
             return -M_PI_2;
         return 0;
     }
-    if (y >= 0)
-        return atanl(y / x) + M_PI;
-    return atanl(y / x) - M_PI;
+
+    long double result = 0; //atanl(y / x);
+    __asm__("fpatan"
+            : "=t"(result)
+            : "0"(x), "u"(y)
+            : "st(1)");
+    return result;
 }
 
 double atan2(double y, double x) NOEXCEPT
@@ -810,7 +799,7 @@ double acos(double x) NOEXCEPT
 
 float acosf(float x) NOEXCEPT
 {
-    return M_PI_2 - asinf(x);
+    return static_cast<float>(M_PI_2) - asinf(x);
 }
 
 long double fabsl(long double value) NOEXCEPT
@@ -1096,9 +1085,9 @@ double lgamma_r(double value, int* sign) NOEXCEPT
 
 float lgammaf_r(float value, int* sign) NOEXCEPT
 {
-    if (value == 1.0 || value == 2.0)
+    if (value == 1.0f || value == 2.0f)
         return 0.0;
-    if (isinf(value) || value == 0.0)
+    if (isinf(value) || value == 0.0f)
         return INFINITY;
     float result = logf(internal_gamma(value));
     *sign = signbit(result) ? -1 : 1;
@@ -1423,5 +1412,20 @@ float fminf(float x, float y) NOEXCEPT
         return x;
 
     return x < y ? x : y;
+}
+
+long double nearbyintl(long double value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
+}
+
+double nearbyint(double value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
+}
+
+float nearbyintf(float value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
 }
 }

@@ -1,39 +1,21 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "WindowManager.h"
 #include "Compositor.h"
 #include "EventLoop.h"
 #include "Menu.h"
-#include "MenuBar.h"
 #include "MenuItem.h"
+#include "Menubar.h"
 #include "Screen.h"
 #include "Window.h"
+#include <AK/Debug.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Vector.h>
+#include <LibGUI/WindowManagerServerConnection.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CharacterBitmap.h>
 #include <LibGfx/Font.h>
@@ -87,7 +69,7 @@ NonnullRefPtr<Cursor> WindowManager::get_cursor(const String& name)
 
 void WindowManager::reload_config()
 {
-    m_config = Core::ConfigFile::open("/etc/WindowServer/WindowServer.ini");
+    m_config = Core::ConfigFile::open("/etc/WindowServer.ini");
 
     m_double_click_speed = m_config->read_num_entry("Input", "DoubleClickSpeed", 250);
     m_hidden_cursor = get_cursor("Hidden");
@@ -117,7 +99,7 @@ const Gfx::Font& WindowManager::font() const
 
 const Gfx::Font& WindowManager::window_title_font() const
 {
-    return Gfx::FontDatabase::default_bold_font();
+    return Gfx::FontDatabase::default_font().bold_variant();
 }
 
 bool WindowManager::set_resolution(int width, int height, int scale)
@@ -134,13 +116,13 @@ bool WindowManager::set_resolution(int width, int height, int scale)
     }
     if (m_config) {
         if (success) {
-            dbgln("Saving resolution: {} @ {}x to config file at {}", Gfx::IntSize(width, height), scale, m_config->file_name());
+            dbgln("Saving resolution: {} @ {}x to config file at {}", Gfx::IntSize(width, height), scale, m_config->filename());
             m_config->write_num_entry("Screen", "Width", width);
             m_config->write_num_entry("Screen", "Height", height);
             m_config->write_num_entry("Screen", "ScaleFactor", scale);
             m_config->sync();
         } else {
-            dbgln("Saving fallback resolution: {} @1x to config file at {}", resolution(), m_config->file_name());
+            dbgln("Saving fallback resolution: {} @1x to config file at {}", resolution(), m_config->filename());
             m_config->write_num_entry("Screen", "Width", resolution().width());
             m_config->write_num_entry("Screen", "Height", resolution().height());
             m_config->write_num_entry("Screen", "ScaleFactor", 1);
@@ -158,7 +140,7 @@ Gfx::IntSize WindowManager::resolution() const
 void WindowManager::set_acceleration_factor(double factor)
 {
     Screen::the().set_acceleration_factor(factor);
-    dbgln("Saving acceleration factor {} to config file at {}", factor, m_config->file_name());
+    dbgln("Saving acceleration factor {} to config file at {}", factor, m_config->filename());
     m_config->write_entry("Mouse", "AccelerationFactor", String::formatted("{}", factor));
     m_config->sync();
 }
@@ -166,7 +148,7 @@ void WindowManager::set_acceleration_factor(double factor)
 void WindowManager::set_scroll_step_size(unsigned step_size)
 {
     Screen::the().set_scroll_step_size(step_size);
-    dbgln("Saving scroll step size {} to config file at {}", step_size, m_config->file_name());
+    dbgln("Saving scroll step size {} to config file at {}", step_size, m_config->filename());
     m_config->write_entry("Mouse", "ScrollStepSize", String::number(step_size));
     m_config->sync();
 }
@@ -175,7 +157,7 @@ void WindowManager::set_double_click_speed(int speed)
 {
     VERIFY(speed >= double_click_speed_min && speed <= double_click_speed_max);
     m_double_click_speed = speed;
-    dbgln("Saving double-click speed {} to config file at {}", speed, m_config->file_name());
+    dbgln("Saving double-click speed {} to config file at {}", speed, m_config->filename());
     m_config->write_entry("Input", "DoubleClickSpeed", String::number(speed));
     m_config->sync();
 }
@@ -194,7 +176,7 @@ void WindowManager::add_window(Window& window)
 {
     bool is_first_window = m_windows_in_order.is_empty();
 
-    m_windows_in_order.append(&window);
+    m_windows_in_order.append(window);
 
     if (window.is_fullscreen()) {
         Core::EventLoop::current().post_event(window, make<ResizeEvent>(Screen::the().rect()));
@@ -209,21 +191,9 @@ void WindowManager::add_window(Window& window)
 
     Compositor::the().invalidate_occlusions();
 
-    if (window.listens_to_wm_events()) {
-        for_each_window([&](Window& other_window) {
-            if (&window != &other_window) {
-                tell_wm_listener_about_window(window, other_window);
-                tell_wm_listener_about_window_icon(window, other_window);
-            }
-            return IterationDecision::Continue;
-        });
-        if (auto* applet_area_window = AppletManager::the().window())
-            tell_wm_listeners_applet_area_size_changed(applet_area_window->size());
-    }
-
     window.invalidate(true, true);
 
-    tell_wm_listeners_window_state_changed(window);
+    tell_wms_window_state_changed(window);
 }
 
 void WindowManager::move_to_front_and_make_active(Window& window)
@@ -258,10 +228,10 @@ void WindowManager::move_to_front_and_make_active(Window& window)
 
 void WindowManager::do_move_to_front(Window& window, bool make_active, bool make_input)
 {
-    if (m_windows_in_order.tail() != &window)
+    if (m_windows_in_order.last() != &window)
         window.invalidate();
-    m_windows_in_order.remove(&window);
-    m_windows_in_order.append(&window);
+    m_windows_in_order.remove(window);
+    m_windows_in_order.append(window);
 
     if (make_active)
         set_active_window(&window, make_input);
@@ -282,7 +252,7 @@ void WindowManager::do_move_to_front(Window& window, bool make_active, bool make
 
 void WindowManager::remove_window(Window& window)
 {
-    m_windows_in_order.remove(&window);
+    m_windows_in_order.remove(window);
     auto* active = active_window();
     auto* active_input = active_input_window();
     if (active == &window || active_input == &window || (active && window.is_descendant_of(*active)) || (active_input && active_input != active && window.is_descendant_of(*active_input)))
@@ -295,71 +265,107 @@ void WindowManager::remove_window(Window& window)
 
     Compositor::the().invalidate_occlusions();
 
-    for_each_window_listening_to_wm_events([&window](Window& listener) {
-        if (!(listener.wm_event_mask() & WMEventMask::WindowRemovals))
+    for_each_window_manager([&window](WMClientConnection& conn) {
+        if (conn.window_id() < 0 || !(conn.event_mask() & WMEventMask::WindowRemovals))
             return IterationDecision::Continue;
         if (!window.is_internal() && !window.is_modal())
-            listener.client()->post_message(Messages::WindowClient::WM_WindowRemoved(listener.window_id(), window.client_id(), window.window_id()));
+            conn.async_window_removed(conn.window_id(), window.client_id(), window.window_id());
         return IterationDecision::Continue;
     });
 }
 
-void WindowManager::tell_wm_listener_about_window(Window& listener, Window& window)
+void WindowManager::greet_window_manager(WMClientConnection& conn)
 {
-    if (!(listener.wm_event_mask() & WMEventMask::WindowStateChanges))
+    if (conn.window_id() < 0)
+        return;
+
+    for_each_window([&](Window& other_window) {
+        //if (conn.window_id() != other_window.window_id()) {
+        tell_wm_about_window(conn, other_window);
+        tell_wm_about_window_icon(conn, other_window);
+        //}
+        return IterationDecision::Continue;
+    });
+    if (auto* applet_area_window = AppletManager::the().window())
+        tell_wms_applet_area_size_changed(applet_area_window->size());
+}
+
+void WindowManager::tell_wm_about_window(WMClientConnection& conn, Window& window)
+{
+    if (conn.window_id() < 0)
+        return;
+    if (!(conn.event_mask() & WMEventMask::WindowStateChanges))
         return;
     if (window.is_internal())
         return;
     auto* parent = window.parent_window();
-    listener.client()->post_message(Messages::WindowClient::WM_WindowStateChanged(listener.window_id(), window.client_id(), window.window_id(), parent ? parent->client_id() : -1, parent ? parent->window_id() : -1, window.is_active(), window.is_minimized(), window.is_modal_dont_unparent(), window.is_frameless(), (i32)window.type(), window.title(), window.rect(), window.progress()));
+    conn.async_window_state_changed(conn.window_id(), window.client_id(), window.window_id(), parent ? parent->client_id() : -1, parent ? parent->window_id() : -1, window.is_active(), window.is_minimized(), window.is_modal_dont_unparent(), window.is_frameless(), (i32)window.type(), window.computed_title(), window.rect(), window.progress());
 }
 
-void WindowManager::tell_wm_listener_about_window_rect(Window& listener, Window& window)
+void WindowManager::tell_wm_about_window_rect(WMClientConnection& conn, Window& window)
 {
-    if (!(listener.wm_event_mask() & WMEventMask::WindowRectChanges))
+    if (conn.window_id() < 0)
+        return;
+    if (!(conn.event_mask() & WMEventMask::WindowRectChanges))
         return;
     if (window.is_internal())
         return;
-    listener.client()->post_message(Messages::WindowClient::WM_WindowRectChanged(listener.window_id(), window.client_id(), window.window_id(), window.rect()));
+    conn.async_window_rect_changed(conn.window_id(), window.client_id(), window.window_id(), window.rect());
 }
 
-void WindowManager::tell_wm_listener_about_window_icon(Window& listener, Window& window)
+void WindowManager::tell_wm_about_window_icon(WMClientConnection& conn, Window& window)
 {
-    if (!(listener.wm_event_mask() & WMEventMask::WindowIconChanges))
+    if (conn.window_id() < 0)
+        return;
+    if (!(conn.event_mask() & WMEventMask::WindowIconChanges))
         return;
     if (window.is_internal())
         return;
-    listener.client()->post_message(Messages::WindowClient::WM_WindowIconBitmapChanged(listener.window_id(), window.client_id(), window.window_id(), window.icon().to_shareable_bitmap()));
+    conn.async_window_icon_bitmap_changed(conn.window_id(), window.client_id(), window.window_id(), window.icon().to_shareable_bitmap());
 }
 
-void WindowManager::tell_wm_listeners_window_state_changed(Window& window)
+void WindowManager::tell_wms_window_state_changed(Window& window)
 {
-    for_each_window_listening_to_wm_events([&](Window& listener) {
-        tell_wm_listener_about_window(listener, window);
+    for_each_window_manager([&](WMClientConnection& conn) {
+        tell_wm_about_window(conn, window);
         return IterationDecision::Continue;
     });
 }
 
-void WindowManager::tell_wm_listeners_window_icon_changed(Window& window)
+void WindowManager::tell_wms_window_icon_changed(Window& window)
 {
-    for_each_window_listening_to_wm_events([&](Window& listener) {
-        tell_wm_listener_about_window_icon(listener, window);
+    for_each_window_manager([&](WMClientConnection& conn) {
+        tell_wm_about_window_icon(conn, window);
         return IterationDecision::Continue;
     });
 }
 
-void WindowManager::tell_wm_listeners_window_rect_changed(Window& window)
+void WindowManager::tell_wms_window_rect_changed(Window& window)
 {
-    for_each_window_listening_to_wm_events([&](Window& listener) {
-        tell_wm_listener_about_window_rect(listener, window);
+    for_each_window_manager([&](WMClientConnection& conn) {
+        tell_wm_about_window_rect(conn, window);
         return IterationDecision::Continue;
     });
 }
 
-void WindowManager::tell_wm_listeners_applet_area_size_changed(const Gfx::IntSize& size)
+void WindowManager::tell_wms_applet_area_size_changed(const Gfx::IntSize& size)
 {
-    for_each_window_listening_to_wm_events([&](Window& listener) {
-        listener.client()->post_message(Messages::WindowClient::WM_AppletAreaSizeChanged(listener.window_id(), size));
+    for_each_window_manager([&](WMClientConnection& conn) {
+        if (conn.window_id() < 0)
+            return IterationDecision::Continue;
+
+        conn.async_applet_area_size_changed(conn.window_id(), size);
+        return IterationDecision::Continue;
+    });
+}
+
+void WindowManager::tell_wms_super_key_pressed()
+{
+    for_each_window_manager([](WMClientConnection& conn) {
+        if (conn.window_id() < 0)
+            return IterationDecision::Continue;
+
+        conn.async_super_key_pressed(conn.window_id());
         return IterationDecision::Continue;
     });
 }
@@ -367,6 +373,14 @@ void WindowManager::tell_wm_listeners_applet_area_size_changed(const Gfx::IntSiz
 static bool window_type_has_title(WindowType type)
 {
     return type == WindowType::Normal || type == WindowType::ToolWindow;
+}
+
+void WindowManager::notify_modified_changed(Window& window)
+{
+    if (m_switcher.is_visible())
+        m_switcher.refresh();
+
+    tell_wms_window_state_changed(window);
 }
 
 void WindowManager::notify_title_changed(Window& window)
@@ -379,7 +393,7 @@ void WindowManager::notify_title_changed(Window& window)
     if (m_switcher.is_visible())
         m_switcher.refresh();
 
-    tell_wm_listeners_window_state_changed(window);
+    tell_wms_window_state_changed(window);
 }
 
 void WindowManager::notify_modal_unparented(Window& window)
@@ -392,7 +406,7 @@ void WindowManager::notify_modal_unparented(Window& window)
     if (m_switcher.is_visible())
         m_switcher.refresh();
 
-    tell_wm_listeners_window_state_changed(window);
+    tell_wms_window_state_changed(window);
 }
 
 void WindowManager::notify_rect_changed(Window& window, const Gfx::IntRect& old_rect, const Gfx::IntRect& new_rect)
@@ -402,12 +416,13 @@ void WindowManager::notify_rect_changed(Window& window, const Gfx::IntRect& old_
     if (m_switcher.is_visible() && window.type() != WindowType::WindowSwitcher)
         m_switcher.refresh();
 
-    tell_wm_listeners_window_rect_changed(window);
+    tell_wms_window_rect_changed(window);
 
     if (window.type() == WindowType::Applet)
         AppletManager::the().relayout();
 
     MenuManager::the().refresh();
+    reevaluate_hovered_window(&window);
 }
 
 void WindowManager::notify_opacity_changed(Window&)
@@ -417,10 +432,10 @@ void WindowManager::notify_opacity_changed(Window&)
 
 void WindowManager::notify_minimization_state_changed(Window& window)
 {
-    tell_wm_listeners_window_state_changed(window);
+    tell_wms_window_state_changed(window);
 
     if (window.client())
-        window.client()->post_message(Messages::WindowClient::WindowStateChanged(window.window_id(), window.is_minimized(), window.is_occluded()));
+        window.client()->async_window_state_changed(window.window_id(), window.is_minimized(), window.is_occluded());
 
     if (window.is_active() && window.is_minimized())
         pick_new_active_window(&window);
@@ -429,12 +444,12 @@ void WindowManager::notify_minimization_state_changed(Window& window)
 void WindowManager::notify_occlusion_state_changed(Window& window)
 {
     if (window.client())
-        window.client()->post_message(Messages::WindowClient::WindowStateChanged(window.window_id(), window.is_minimized(), window.is_occluded()));
+        window.client()->async_window_state_changed(window.window_id(), window.is_minimized(), window.is_occluded());
 }
 
 void WindowManager::notify_progress_changed(Window& window)
 {
-    tell_wm_listeners_window_state_changed(window);
+    tell_wms_window_state_changed(window);
 }
 
 bool WindowManager::pick_new_active_window(Window* previous_active)
@@ -462,20 +477,29 @@ bool WindowManager::pick_new_active_window(Window* previous_active)
     return new_window_picked;
 }
 
-void WindowManager::start_window_move(Window& window, const MouseEvent& event)
+void WindowManager::start_window_move(Window& window, const Gfx::IntPoint& origin)
 {
+    MenuManager::the().close_everyone();
+
     dbgln_if(MOVE_DEBUG, "[WM] Begin moving Window({})", &window);
 
     move_to_front_and_make_active(window);
     m_move_window = window;
     m_move_window->set_default_positioned(false);
-    m_move_origin = event.position();
+    m_move_origin = origin;
     m_move_window_origin = window.position();
     window.invalidate(true, true);
 }
 
+void WindowManager::start_window_move(Window& window, const MouseEvent& event)
+{
+    start_window_move(window, event.position());
+}
+
 void WindowManager::start_window_resize(Window& window, const Gfx::IntPoint& position, MouseButton button)
 {
+    MenuManager::the().close_everyone();
+
     move_to_front_and_make_active(window);
     constexpr ResizeDirection direction_for_hot_area[3][3] = {
         { ResizeDirection::UpLeft, ResizeDirection::Up, ResizeDirection::UpRight },
@@ -532,9 +556,7 @@ bool WindowManager::process_ongoing_window_move(MouseEvent& event, Window*& hove
         if (m_move_window->is_resizable()) {
             process_event_for_doubleclick(*m_move_window, event);
             if (event.type() == Event::MouseDoubleClick) {
-#if defined(DOUBLECLICK_DEBUG)
-                dbgln("[WM] Click up became doubleclick!");
-#endif
+                dbgln_if(DOUBLECLICK_DEBUG, "[WM] Click up became doubleclick!");
                 m_move_window->set_maximized(!m_move_window->is_maximized());
             }
         }
@@ -687,10 +709,11 @@ bool WindowManager::process_ongoing_window_resize(const MouseEvent& event, Windo
 
     if (m_resize_window->resize_aspect_ratio().has_value()) {
         auto& ratio = m_resize_window->resize_aspect_ratio().value();
+        auto base_size = m_resize_window->base_size();
         if (abs(change_w) > abs(change_h)) {
-            new_rect.set_height(new_rect.width() * ratio.height() / ratio.width());
+            new_rect.set_height(base_size.height() + (new_rect.width() - base_size.width()) * ratio.height() / ratio.width());
         } else {
-            new_rect.set_width(new_rect.height() * ratio.width() / ratio.height());
+            new_rect.set_width(base_size.width() + (new_rect.height() - base_size.height()) * ratio.width() / ratio.height());
         }
     }
 
@@ -764,13 +787,13 @@ bool WindowManager::process_ongoing_drag(MouseEvent& event, Window*& hovered_win
     });
 
     if (hovered_window) {
-        m_dnd_client->post_message(Messages::WindowClient::DragAccepted());
+        m_dnd_client->async_drag_accepted();
         if (hovered_window->client()) {
             auto translated_event = event.translated(-hovered_window->position());
-            hovered_window->client()->post_message(Messages::WindowClient::DragDropped(hovered_window->window_id(), translated_event.position(), m_dnd_text, m_dnd_mime_data->all_data()));
+            hovered_window->client()->async_drag_dropped(hovered_window->window_id(), translated_event.position(), m_dnd_text, m_dnd_mime_data->all_data());
         }
     } else {
-        m_dnd_client->post_message(Messages::WindowClient::DragCancelled());
+        m_dnd_client->async_drag_cancelled();
     }
 
     end_dnd_drag();
@@ -1069,13 +1092,15 @@ void WindowManager::process_mouse_event(MouseEvent& event, Window*& hovered_wind
             set_active_window(nullptr);
     }
 
-    for (auto* window = m_windows_in_order.tail(); window; window = window->prev()) {
-        if (received_mouse_event == window)
+    auto reverse_iterator = m_windows_in_order.rbegin();
+    for (; reverse_iterator != m_windows_in_order.rend(); ++reverse_iterator) {
+        auto& window = *reverse_iterator;
+        if (received_mouse_event == &window)
             continue;
-        if (!window->global_cursor_tracking() || !window->is_visible() || window->is_minimized() || window->blocking_modal_window())
+        if (!window.global_cursor_tracking() || !window.is_visible() || window.is_minimized() || window.blocking_modal_window())
             continue;
-        auto translated_event = event.translated(-window->position());
-        deliver_mouse_event(*window, translated_event, false);
+        auto translated_event = event.translated(-window.position());
+        deliver_mouse_event(window, translated_event, false);
     }
 
     if (event_window_with_frame != m_resize_candidate.ptr())
@@ -1169,6 +1194,9 @@ Gfx::IntRect WindowManager::arena_rect_for_type(WindowType type) const
 void WindowManager::event(Core::Event& event)
 {
     if (static_cast<Event&>(event).is_mouse_event()) {
+        if (event.type() != Event::MouseMove)
+            m_previous_event_was_super_keydown = false;
+
         Window* hovered_window = nullptr;
         process_mouse_event(static_cast<MouseEvent&>(event), hovered_window);
         set_hovered_window(hovered_window);
@@ -1182,11 +1210,11 @@ void WindowManager::event(Core::Event& event)
         // Escape key cancels an ongoing drag.
         if (key_event.type() == Event::KeyDown && key_event.key() == Key_Escape && m_dnd_client) {
             // Notify the drag-n-drop client that the drag was cancelled.
-            m_dnd_client->post_message(Messages::WindowClient::DragCancelled());
+            m_dnd_client->async_drag_cancelled();
 
             // Also notify the currently hovered window (if any) that the ongoing drag was cancelled.
             if (m_hovered_window && m_hovered_window->client() && m_hovered_window->client() != m_dnd_client)
-                m_hovered_window->client()->post_message(Messages::WindowClient::DragCancelled());
+                m_hovered_window->client()->async_drag_cancelled();
 
             end_dnd_drag();
             return;
@@ -1198,7 +1226,17 @@ void WindowManager::event(Core::Event& event)
             return;
         }
 
-        if (MenuManager::the().current_menu()) {
+        if (key_event.type() == Event::KeyDown && key_event.key() == Key_Super) {
+            m_previous_event_was_super_keydown = true;
+        } else if (m_previous_event_was_super_keydown) {
+            m_previous_event_was_super_keydown = false;
+            if (!m_dnd_client && key_event.type() == Event::KeyUp && key_event.key() == Key_Super) {
+                tell_wms_super_key_pressed();
+                return;
+            }
+        }
+
+        if (MenuManager::the().current_menu() && key_event.key() != Key_Super) {
             MenuManager::the().dispatch_event(event);
             return;
         }
@@ -1304,7 +1342,10 @@ void WindowManager::restore_active_input_window(Window* window)
     if (!window && pick_new_active_window(nullptr))
         return;
 
-    set_active_input_window(window);
+    if (window && !window->is_minimized() && window->is_visible())
+        set_active_input_window(window);
+    else
+        set_active_input_window(nullptr);
 }
 
 Window* WindowManager::set_active_input_window(Window* window)
@@ -1360,14 +1401,14 @@ void WindowManager::set_active_window(Window* window, bool make_input)
         previously_active_window->invalidate(true, true);
         m_active_window = nullptr;
         m_active_input_tracking_window = nullptr;
-        tell_wm_listeners_window_state_changed(*previously_active_window);
+        tell_wms_window_state_changed(*previously_active_window);
     }
 
     if (window) {
         m_active_window = *window;
         Core::EventLoop::current().post_event(*m_active_window, make<Event>(Event::WindowActivated));
         m_active_window->invalidate(true, true);
-        tell_wm_listeners_window_state_changed(*m_active_window);
+        tell_wms_window_state_changed(*m_active_window);
     }
 
     // Window shapes may have changed (e.g. shadows for inactive/active windows)
@@ -1458,8 +1499,8 @@ Gfx::IntRect WindowManager::maximized_window_rect(const Window& window) const
     Gfx::IntRect rect = Screen::the().rect();
 
     // Subtract window title bar (leaving the border)
-    rect.set_y(rect.y() + window.frame().title_bar_rect().height() + window.frame().menubar_rect().height());
-    rect.set_height(rect.height() - window.frame().title_bar_rect().height() - window.frame().menubar_rect().height());
+    rect.set_y(rect.y() + window.frame().titlebar_rect().height() + window.frame().menubar_rect().height());
+    rect.set_height(rect.height() - window.frame().titlebar_rect().height() - window.frame().menubar_rect().height());
 
     // Subtract taskbar window height if present
     const_cast<WindowManager*>(this)->for_each_visible_window_of_type_from_back_to_front(WindowType::Taskbar, [&rect](Window& taskbar_window) {
@@ -1467,7 +1508,7 @@ Gfx::IntRect WindowManager::maximized_window_rect(const Window& window) const
         return IterationDecision::Break;
     });
 
-    constexpr int tasteful_space_above_maximized_window = 2;
+    constexpr int tasteful_space_above_maximized_window = 1;
     rect.set_y(rect.y() + tasteful_space_above_maximized_window);
     rect.set_height(rect.height() - tasteful_space_above_maximized_window);
 
@@ -1504,6 +1545,23 @@ Gfx::IntRect WindowManager::dnd_rect() const
     return Gfx::IntRect(location, { width, height }).inflated(16, 8);
 }
 
+void WindowManager::invalidate_after_theme_or_font_change()
+{
+    Compositor::the().set_background_color(m_config->read_entry("Background", "Color", palette().desktop_background().to_string()));
+    WindowFrame::reload_config();
+    for_each_window([&](Window& window) {
+        window.frame().theme_changed();
+        return IterationDecision::Continue;
+    });
+    ClientConnection::for_each_client([&](ClientConnection& client) {
+        client.async_update_system_theme(Gfx::current_system_theme_buffer());
+    });
+    MenuManager::the().did_change_theme();
+    AppletManager::the().did_change_theme();
+    Compositor::the().invalidate_occlusions();
+    Compositor::the().invalidate_screen();
+}
+
 bool WindowManager::update_theme(String theme_path, String theme_name)
 {
     auto new_theme = Gfx::load_system_theme(theme_path);
@@ -1511,26 +1569,11 @@ bool WindowManager::update_theme(String theme_path, String theme_name)
         return false;
     Gfx::set_system_theme(new_theme);
     m_palette = Gfx::PaletteImpl::create_with_anonymous_buffer(new_theme);
-    Compositor::the().set_background_color(palette().desktop_background().to_string());
-    HashTable<ClientConnection*> notified_clients;
-    WindowFrame::reload_config();
-    for_each_window([&](Window& window) {
-        if (window.client()) {
-            if (!notified_clients.contains(window.client())) {
-                window.client()->post_message(Messages::WindowClient::UpdateSystemTheme(Gfx::current_system_theme_buffer()));
-                notified_clients.set(window.client());
-            }
-        }
-        window.frame().theme_changed();
-        return IterationDecision::Continue;
-    });
-    MenuManager::the().did_change_theme();
-    AppletManager::the().did_change_theme();
-    auto wm_config = Core::ConfigFile::open("/etc/WindowServer/WindowServer.ini");
+    auto wm_config = Core::ConfigFile::open("/etc/WindowServer.ini");
     wm_config->write_entry("Theme", "Name", theme_name);
+    wm_config->remove_entry("Background", "Color");
     wm_config->sync();
-    Compositor::the().invalidate_occlusions();
-    Compositor::the().invalidate_screen();
+    invalidate_after_theme_or_font_change();
     return true;
 }
 
@@ -1565,7 +1608,7 @@ void WindowManager::maximize_windows(Window& window, bool maximized)
 Gfx::IntPoint WindowManager::get_recommended_window_position(const Gfx::IntPoint& desired)
 {
     // FIXME: Find a  better source for the width and height to shift by.
-    Gfx::IntPoint shift(8, Gfx::WindowTheme::current().title_bar_height(Gfx::WindowTheme::WindowType::Normal, palette()) + 10);
+    Gfx::IntPoint shift(8, Gfx::WindowTheme::current().titlebar_height(Gfx::WindowTheme::WindowType::Normal, palette()) + 10);
 
     // FIXME: Find a better source for this.
     int taskbar_height = 28;
@@ -1583,7 +1626,7 @@ Gfx::IntPoint WindowManager::get_recommended_window_position(const Gfx::IntPoint
         point = overlap_window->position() + shift;
         point = { point.x() % Screen::the().width(),
             (point.y() >= (Screen::the().height() - taskbar_height))
-                ? Gfx::WindowTheme::current().title_bar_height(Gfx::WindowTheme::WindowType::Normal, palette())
+                ? Gfx::WindowTheme::current().titlebar_height(Gfx::WindowTheme::WindowType::Normal, palette())
                 : point.y() };
     } else {
         point = desired;

@@ -13,19 +13,23 @@ set(LIBC_SOURCES
     ioctl.cpp
     libcinit.cpp
     libgen.cpp
+    link.cpp
     locale.cpp
     malloc.cpp
-    mman.cpp
     mntent.cpp
+    net.cpp
     netdb.cpp
     poll.cpp
+    pthread_forward.cpp
     pthread_integration.cpp
+    pthread_tls.cpp
+    pty.cpp
     pwd.cpp
     qsort.cpp
     scanf.cpp
     sched.cpp
-    semaphore.cpp
     serenity.cpp
+    shadow.cpp
     signal.cpp
     spawn.cpp
     stat.cpp
@@ -35,12 +39,14 @@ set(LIBC_SOURCES
     strings.cpp
     stubs.cpp
     syslog.cpp
+    sys/mman.cpp
     sys/prctl.cpp
     sys/ptrace.cpp
     sys/select.cpp
     sys/socket.cpp
     sys/uio.cpp
     sys/wait.cpp
+    sys/statvfs.cpp
     termcap.cpp
     termios.cpp
     time.cpp
@@ -50,6 +56,7 @@ set(LIBC_SOURCES
     utime.cpp
     utsname.cpp
     wchar.cpp
+    wctype.cpp
 )
 
 file(GLOB AK_SOURCES CONFIGURE_DEPENDS "../../../AK/*.cpp")
@@ -88,16 +95,17 @@ set(SOURCES ${LIBC_SOURCES} ${AK_SOURCES} ${ELF_SOURCES} ${ASM_SOURCES})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++")
 add_library(LibCStaticWithoutDeps STATIC ${SOURCES})
-target_link_libraries(LibCStaticWithoutDeps crt0 ssp)
-add_dependencies(LibCStaticWithoutDeps LibM LibSystem)
+target_link_libraries(LibCStaticWithoutDeps ssp)
+add_dependencies(LibCStaticWithoutDeps LibM LibSystem LibUBSanitizer)
 
 add_custom_target(LibCStatic
         COMMAND ${CMAKE_AR} -x $<TARGET_FILE:LibCStaticWithoutDeps>
         COMMAND ${CMAKE_AR} -x $<TARGET_FILE:ssp>
         COMMAND ${CMAKE_AR} -x $<TARGET_FILE:LibSystemStatic>
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:LibUBSanitizerStatic>
         COMMAND ${CMAKE_AR} -qcs ${CMAKE_CURRENT_BINARY_DIR}/libc.a *.o
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        DEPENDS LibCStaticWithoutDeps ssp LibSystemStatic
+        DEPENDS LibCStaticWithoutDeps ssp LibSystemStatic LibUBSanitizerStatic
         )
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libc.a DESTINATION ${CMAKE_INSTALL_PREFIX}/usr/lib/)
@@ -110,7 +118,7 @@ set_property(
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++")
 serenity_libc(LibC c)
-target_link_libraries(LibC crt0 ssp system)
+target_link_libraries(LibC ssp system)
 
 # We mark LibCStatic as a dependency of LibC because this triggers the build of the LibCStatic target
 add_dependencies(LibC LibM LibSystem LibCStatic)

@@ -1,32 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Locator.h"
 #include "HackStudio.h"
 #include "Project.h"
+#include "ProjectDeclarations.h"
 #include <LibGUI/AutocompleteProvider.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/FileIconProvider.h>
@@ -85,23 +66,9 @@ public:
             if (index.column() == Column::Filename)
                 return suggestion.as_symbol_declaration.value().position.file;
             if (index.column() == Column::Icon) {
-                static GUI::Icon struct_icon(Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Struct.png"));
-                static GUI::Icon class_icon(Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Class.png"));
-                static GUI::Icon function_icon(Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Function.png"));
-                static GUI::Icon variable_icon(Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Variable.png"));
-                static GUI::Icon preprocessor_icon(Gfx::Bitmap::load_from_file("/res/icons/hackstudio/Preprocessor.png"));
-                switch (suggestion.as_symbol_declaration.value().type) {
-                case GUI::AutocompleteProvider::DeclarationType::Struct:
-                    return struct_icon;
-                case GUI::AutocompleteProvider::DeclarationType::Class:
-                    return class_icon;
-                case GUI::AutocompleteProvider::DeclarationType::Function:
-                    return function_icon;
-                case GUI::AutocompleteProvider::DeclarationType::Variable:
-                    return variable_icon;
-                case GUI::AutocompleteProvider::DeclarationType::PreprocessorDefinition:
-                    return preprocessor_icon;
-                }
+                auto icon = ProjectDeclarations::get_icon_for(suggestion.as_symbol_declaration.value().type);
+                if (icon.has_value())
+                    return icon.value();
                 return {};
             }
         }
@@ -136,9 +103,12 @@ Locator::Locator(Core::Object* parent)
     m_textbox->on_change = [this] {
         update_suggestions();
     };
+
     m_textbox->on_escape_pressed = [this] {
         m_popup_window->hide();
+        m_textbox->set_focus(false);
     };
+
     m_textbox->on_up_pressed = [this] {
         GUI::ModelIndex new_index = m_suggestion_view->selection().first();
         if (new_index.is_valid())
@@ -169,6 +139,10 @@ Locator::Locator(Core::Object* parent)
         if (!selected_index.is_valid())
             return;
         open_suggestion(selected_index);
+    };
+
+    m_textbox->on_focusout = [&]() {
+        close();
     };
 
     m_popup_window = GUI::Window::construct(parent);
@@ -226,12 +200,10 @@ void Locator::update_suggestions()
             suggestions.append(LocatorSuggestionModel::Suggestion::create_filename(file.name()));
     });
 
-    for (auto& item : m_document_to_declarations) {
-        for (auto& decl : item.value) {
-            if (decl.name.contains(typed_text, CaseSensitivity::CaseInsensitive) || decl.scope.contains(typed_text, CaseSensitivity::CaseInsensitive))
-                suggestions.append((LocatorSuggestionModel::Suggestion::create_symbol_declaration(decl)));
-        }
-    }
+    ProjectDeclarations::the().for_each_declared_symbol([&suggestions, &typed_text](auto& decl) {
+        if (decl.name.contains(typed_text, CaseSensitivity::CaseInsensitive) || decl.scope.contains(typed_text, CaseSensitivity::CaseInsensitive))
+            suggestions.append((LocatorSuggestionModel::Suggestion::create_symbol_declaration(decl)));
+    });
 
     dbgln("I have {} suggestion(s):", suggestions.size());
     // Limit the debug logging otherwise this can be very slow for large projects
@@ -246,7 +218,7 @@ void Locator::update_suggestions()
 
     bool has_suggestions = !suggestions.is_empty();
 
-    m_suggestion_view->set_model(adopt(*new LocatorSuggestionModel(move(suggestions))));
+    m_suggestion_view->set_model(adopt_ref(*new LocatorSuggestionModel(move(suggestions))));
 
     if (!has_suggestions)
         m_suggestion_view->selection().clear();
@@ -257,9 +229,4 @@ void Locator::update_suggestions()
     dbgln("Popup rect: {}", m_popup_window->rect());
     m_popup_window->show();
 }
-void Locator::set_declared_symbols(const String& filename, const Vector<GUI::AutocompleteProvider::Declaration>& declarations)
-{
-    m_document_to_declarations.set(filename, declarations);
-}
-
 }

@@ -20,7 +20,7 @@ For more details on known working hardware see the [SerenityOS Hardware Compatib
 
 ## Creating a Serenity GRUB disk image
 
-Before creating a Serenity disk image, you need to build the OS as described in the [SerenityOS build instructions](https://github.com/SerenityOS/serenity/blob/master/Documentation/BuildInstructions.md). Follow those instructions up to and including running **make install**. After the OS has built, run **make grub-image** to create a new file called **grub_disk_image** with GRUB2 installed that can be booted on a real PC.
+Before creating a Serenity disk image, you need to build the OS as described in the [SerenityOS build instructions](https://github.com/SerenityOS/serenity/blob/master/Documentation/BuildInstructions.md). Follow those instructions up to and including running **ninja install**. After the OS has built, run **ninja grub-image** to create a new file called **grub_disk_image** with GRUB2 installed that can be booted on a real PC.
 
 The final step is copying **grub_disk_image** onto the disk you wish to use to boot Serenity using a command such as:
 
@@ -48,4 +48,13 @@ $ cu -s 57600 -l /dev/ttyUSB0
 
 ## Troubleshooting boot issues without a serial port
 
-If your computer fails to boot and it doesn't have a serial port, you can force Serenity to boot into text mode by editing **Kernel/Arch/i386/Boot/boot.S** and removing **| MULTIBOOT_VIDEO_MODE** from the end of the **multiboot_flags** before building Serenity. This debug source tweak differs from the Serenity text mode GRUB boot option which boots you directly into a text mode shell.
+During the boot process, you should be able to see logging of important messages on the screen, printed solely by the kernel.
+If it happens to you that the system hangs, you should be able to see the last message on the screen. It can be either
+an assertion or kernel panic. Depending on your hardware setup, the framebuffer could be 80x25 VGA text mode, or high resolution
+framebuffer with 8x8 font glyphs.
+
+You can force capable multiboot bootloaders to boot Serenity into high resolution mode by editing **Kernel/Arch/i386/Boot/boot.S** and 
+adding **| MULTIBOOT_VIDEO_MODE** to the end of the **multiboot_flags** before building Serenity.
+
+Setting a boot argument of `boot_mode=no-fbdev` will force the kernel to not initialize any framebuffer devices, hence allowing the system
+to boot into console-only mode as `SystemServer` will detect this condition and will not initialize `WindowServer`.

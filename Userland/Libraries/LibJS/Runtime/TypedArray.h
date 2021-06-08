@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -64,23 +44,29 @@ private:
     virtual void visit_edges(Visitor&) override;
 };
 
+struct ClampedU8 {
+};
+
 template<typename T>
 class TypedArray : public TypedArrayBase {
     JS_OBJECT(TypedArray, TypedArrayBase);
 
+    using UnderlyingBufferDataType = Conditional<IsSame<ClampedU8, T>, u8, T>;
+
 public:
     virtual bool put_by_index(u32 property_index, Value value) override
     {
-        property_index += m_byte_offset / sizeof(T);
         if (property_index >= m_array_length)
             return Base::put_by_index(property_index, value);
 
-        if constexpr (sizeof(T) < 4) {
+        if constexpr (sizeof(UnderlyingBufferDataType) < 4) {
             auto number = value.to_i32(global_object());
             if (vm().exception())
                 return {};
+            if constexpr (IsSame<T, ClampedU8>)
+                number = clamp(number, 0, 255);
             data()[property_index] = number;
-        } else if constexpr (sizeof(T) == 4 || sizeof(T) == 8) {
+        } else if constexpr (sizeof(UnderlyingBufferDataType) == 4 || sizeof(UnderlyingBufferDataType) == 8) {
             auto number = value.to_double(global_object());
             if (vm().exception())
                 return {};
@@ -93,17 +79,16 @@ public:
 
     virtual Value get_by_index(u32 property_index) const override
     {
-        property_index += m_byte_offset / sizeof(T);
         if (property_index >= m_array_length)
             return Base::get_by_index(property_index);
 
-        if constexpr (sizeof(T) < 4) {
+        if constexpr (sizeof(UnderlyingBufferDataType) < 4) {
             return Value((i32)data()[property_index]);
-        } else if constexpr (sizeof(T) == 4 || sizeof(T) == 8) {
+        } else if constexpr (sizeof(UnderlyingBufferDataType) == 4 || sizeof(UnderlyingBufferDataType) == 8) {
             auto value = data()[property_index];
-            if constexpr (IsFloatingPoint<T>::value) {
+            if constexpr (IsFloatingPoint<UnderlyingBufferDataType>) {
                 return Value((double)value);
-            } else if constexpr (NumericLimits<T>::is_signed()) {
+            } else if constexpr (NumericLimits<UnderlyingBufferDataType>::is_signed()) {
                 if (value > NumericLimits<i32>::max() || value < NumericLimits<i32>::min())
                     return Value((double)value);
             } else {
@@ -116,23 +101,23 @@ public:
         }
     }
 
-    Span<const T> data() const
+    Span<const UnderlyingBufferDataType> data() const
     {
-        return { reinterpret_cast<const T*>(m_viewed_array_buffer->buffer().data()), m_array_length };
+        return { reinterpret_cast<const UnderlyingBufferDataType*>(m_viewed_array_buffer->buffer().data() + m_byte_offset), m_array_length };
     }
-    Span<T> data()
+    Span<UnderlyingBufferDataType> data()
     {
-        return { reinterpret_cast<T*>(m_viewed_array_buffer->buffer().data()), m_array_length };
+        return { reinterpret_cast<UnderlyingBufferDataType*>(m_viewed_array_buffer->buffer().data() + m_byte_offset), m_array_length };
     }
 
-    virtual size_t element_size() const override { return sizeof(T); };
+    virtual size_t element_size() const override { return sizeof(UnderlyingBufferDataType); };
 
 protected:
     TypedArray(u32 array_length, Object& prototype)
         : TypedArrayBase(prototype)
     {
-        VERIFY(!Checked<u32>::multiplication_would_overflow(array_length, sizeof(T)));
-        m_viewed_array_buffer = ArrayBuffer::create(global_object(), array_length * sizeof(T));
+        VERIFY(!Checked<u32>::multiplication_would_overflow(array_length, sizeof(UnderlyingBufferDataType)));
+        m_viewed_array_buffer = ArrayBuffer::create(global_object(), array_length * sizeof(UnderlyingBufferDataType));
         if (array_length)
             VERIFY(!data().is_null());
         m_array_length = array_length;

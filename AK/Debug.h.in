@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -86,6 +66,10 @@
 #cmakedefine01 CURSOR_TOOL_DEBUG
 #endif
 
+#ifndef DDS_DEBUG
+#cmakedefine01 DDS_DEBUG
+#endif
+
 #ifndef DEFERRED_INVOKE_DEBUG
 #cmakedefine01 DEFERRED_INVOKE_DEBUG
 #endif
@@ -130,6 +114,10 @@
 #cmakedefine01 EMOJI_DEBUG
 #endif
 
+#ifndef ESCAPE_SEQUENCE_DEBUG
+#cmakedefine01 ESCAPE_SEQUENCE_DEBUG
+#endif
+
 #ifndef EVENT_DEBUG
 #cmakedefine01 EVENT_DEBUG
 #endif
@@ -142,12 +130,12 @@
 #cmakedefine01 FILE_CONTENT_DEBUG
 #endif
 
-#ifndef FILE_WATCHER_DEBUG
-#cmakedefine01 FILE_WATCHER_DEBUG
-#endif
-
 #ifndef FILL_PATH_DEBUG
 #cmakedefine01 FILL_PATH_DEBUG
+#endif
+
+#ifndef FILE_WATCHER_DEBUG
+#cmakedefine01 FILE_WATCHER_DEBUG
 #endif
 
 #ifndef GEMINI_DEBUG
@@ -170,6 +158,10 @@
 #cmakedefine01 GIF_DEBUG
 #endif
 
+#ifndef GL_DEBUG
+#cmakedefine01 GL_DEBUG
+#endif
+
 #ifndef GLOBAL_DTORS_DEBUG
 #cmakedefine01 GLOBAL_DTORS_DEBUG
 #endif
@@ -180,6 +172,10 @@
 
 #ifndef HEAP_DEBUG
 #cmakedefine01 HEAP_DEBUG
+#endif
+
+#ifndef HEARTS_DEBUG
+#cmakedefine01 HEARTS_DEBUG
 #endif
 
 #ifndef HEX_DEBUG
@@ -230,6 +226,10 @@
 #cmakedefine01 JPG_DEBUG
 #endif
 
+#ifndef JS_BYTECODE_DEBUG
+#cmakedefine01 JS_BYTECODE_DEBUG
+#endif
+
 #ifndef KEYBOARD_SHORTCUTS_DEBUG
 #cmakedefine01 KEYBOARD_SHORTCUTS_DEBUG
 #endif
@@ -260,6 +260,14 @@
 
 #ifndef MARKDOWN_DEBUG
 #cmakedefine01 MARKDOWN_DEBUG
+#endif
+
+#ifndef MATROSKA_DEBUG
+#cmakedefine01 MATROSKA_DEBUG
+#endif
+
+#ifndef MATROSKA_TRACE_DEBUG
+#cmakedefine01 MATROSKA_TRACE_DEBUG
 #endif
 
 #ifndef MEMORY_DEBUG
@@ -300,6 +308,10 @@
 
 #ifndef PATH_DEBUG
 #cmakedefine01 PATH_DEBUG
+#endif
+
+#ifndef PDF_DEBUG
+#cmakedefine01 PDF_DEBUG
 #endif
 
 #ifndef PNG_DEBUG
@@ -354,12 +366,20 @@
 #cmakedefine01 SH_LANGUAGE_SERVER_DEBUG
 #endif
 
+#ifndef SHELL_JOB_DEBUG
+#cmakedefine01 SHELL_JOB_DEBUG
+#endif
+
+#ifndef SOLITAIRE_DEBUG
+#cmakedefine01 SOLITAIRE_DEBUG
+#endif
+
 #ifndef SPAM_DEBUG
 #cmakedefine01 SPAM_DEBUG
 #endif
 
-#ifndef STRINGIMPL_DEBUG
-#cmakedefine01 STRINGIMPL_DEBUG
+#ifndef SQL_DEBUG
+#cmakedefine01 SQL_DEBUG
 #endif
 
 #ifndef SYNTAX_HIGHLIGHTING_DEBUG
@@ -404,6 +424,22 @@
 
 #ifndef UPDATE_COALESCING_DEBUG
 #cmakedefine01 UPDATE_COALESCING_DEBUG
+#endif
+
+#ifndef URL_PARSER_DEBUG
+#cmakedefine01 URL_PARSER_DEBUG
+#endif
+
+#ifndef WASM_BINPARSER_DEBUG
+#cmakedefine01 WASM_BINPARSER_DEBUG
+#endif
+
+#ifndef WASM_TRACE_DEBUG
+#cmakedefine01 WASM_TRACE_DEBUG
+#endif
+
+#ifndef WEBSERVER_DEBUG
+#cmakedefine01 WEBSERVER_DEBUG
 #endif
 
 #ifndef WINDOWMANAGER_DEBUG

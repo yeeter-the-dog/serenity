@@ -1,54 +1,59 @@
 cmake_minimum_required (VERSION 3.0)
 project (Lagom)
 
+include(../CMake/wasm_spec_tests.cmake)
+
 if (NOT ENABLE_OSS_FUZZ)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-warning-option -Wno-literal-suffix -O2 -Wall -Wextra -Werror -std=c++2a -fPIC -g -Wno-deprecated-copy")
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++2a -fPIC -g -Wno-deprecated-copy")
 endif()
 
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-overloaded-virtual -Wno-user-defined-literals")
+if (ENABLE_ADDRESS_SANITIZER)
+    add_definitions(-fsanitize=address -fno-omit-frame-pointer)
+    set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=address")
+endif()
 
-    if (ENABLE_ADDRESS_SANITIZER)
-        add_definitions(-fsanitize=address -fno-omit-frame-pointer)
-        set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=address")
-    endif()
+if (ENABLE_MEMORY_SANITIZER)
+    add_definitions(-fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer)
+    set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=memory -fsanitize-memory-track-origins")
+endif()
 
-    if (ENABLE_MEMORY_SANITIZER)
-        add_definitions(-fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer)
-        set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=memory -fsanitize-memory-track-origins")
-    endif()
+if (ENABLE_UNDEFINED_SANITIZER)
+    add_definitions(-fsanitize=undefined -fno-sanitize=vptr -fno-omit-frame-pointer)
+    set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=undefined -fno-sanitize=vptr")
+endif()
 
-    if (ENABLE_UNDEFINED_SANITIZER)
-        add_definitions(-fsanitize=undefined -fno-omit-frame-pointer)
-        set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=undefined")
-    endif()
+if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang$")
+    # Clang's default constexpr-steps limit is 1048576(2^20), GCC doesn't have one
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-overloaded-virtual -Wno-user-defined-literals -fconstexpr-steps=16777216")
 
     if (ENABLE_FUZZER_SANITIZER)
         add_definitions(-fsanitize=fuzzer -fno-omit-frame-pointer)
         set(LINKER_FLAGS "${LINKER_FLAGS} -fsanitize=fuzzer")
     endif()
 
-    set(ORIGINAL_CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    set(ORIGINAL_CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
-    set(ORIGINAL_CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
-
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINKER_FLAGS}")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${LINKER_FLAGS}")
-    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${LINKER_FLAGS}")
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-expansion-to-defined -Wno-literal-suffix")
 endif()
 
+# These are here to support Fuzzili builds further down the directory stack
+set(ORIGINAL_CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+set(ORIGINAL_CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+set(ORIGINAL_CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
+
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LINKER_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${LINKER_FLAGS}")
+set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${LINKER_FLAGS}")
+
 file(GLOB AK_SOURCES CONFIGURE_DEPENDS "../../AK/*.cpp")
-file(GLOB AK_TEST_SOURCES CONFIGURE_DEPENDS "../../AK/Tests/*.cpp")
+file(GLOB AK_TEST_SOURCES CONFIGURE_DEPENDS "../../Tests/AK/*.cpp")
 file(GLOB LIBARCHIVE_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibArchive/*.cpp")
 file(GLOB LIBAUDIO_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibAudio/*.cpp")
 list(REMOVE_ITEM LIBAUDIO_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../Userland/Libraries/LibAudio/ClientConnection.cpp")
 file(GLOB LIBREGEX_LIBC_SOURCES "../../Userland/Libraries/LibRegex/C/Regex.cpp")
 file(GLOB LIBREGEX_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibRegex/*.cpp")
-file(GLOB LIBREGEX_TESTS CONFIGURE_DEPENDS "../../Userland/Libraries/LibRegex/Tests/*.cpp")
+file(GLOB LIBREGEX_TESTS CONFIGURE_DEPENDS "../../Tests/LibRegex/*.cpp")
 file(GLOB LIBCORE_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibCore/*.cpp")
 file(GLOB LIBELF_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibELF/*.cpp")
 # There's no way we can reliably make this cross platform
@@ -65,18 +70,29 @@ file(GLOB LIBX86_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibX86/*.cp
 file(GLOB LIBJS_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibJS/*.cpp")
 file(GLOB LIBJS_SUBDIR_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibJS/*/*.cpp")
 file(GLOB LIBCOMPRESS_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibCompress/*.cpp")
+file(GLOB LIBCOMPRESS_TESTS CONFIGURE_DEPENDS "../../Tests/LibCompress/*.cpp")
 file(GLOB LIBCRYPTO_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibCrypto/*.cpp")
 file(GLOB LIBCRYPTO_SUBDIR_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibCrypto/*/*.cpp")
+file(GLOB LIBCRYPTO_SUBSUBDIR_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibCrypto/*/*/*.cpp")
 file(GLOB LIBTLS_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibTLS/*.cpp")
 file(GLOB LIBTTF_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibTTF/*.cpp")
 file(GLOB LIBTEXTCODEC_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibTextCodec/*.cpp")
 file(GLOB SHELL_SOURCES CONFIGURE_DEPENDS "../../Userland/Shell/*.cpp")
 file(GLOB SHELL_TESTS CONFIGURE_DEPENDS "../../Userland/Shell/Tests/*.sh")
 list(FILTER SHELL_SOURCES EXCLUDE REGEX ".*main.cpp$")
+file(GLOB LIBSQL_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibSQL/*.cpp")
+list(REMOVE_ITEM LIBSQL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../../Userland/Libraries/LibSQL/SyntaxHighlighter.cpp")
+file(GLOB LIBSQL_TEST_SOURCES CONFIGURE_DEPENDS "../../Tests/LibSQL/*.cpp")
+file(GLOB LIBWASM_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibWasm/*/*.cpp")
+
+file(GLOB LIBTEST_SOURCES CONFIGURE_DEPENDS "../../Userland/Libraries/LibTest/*.cpp")
+list(FILTER LIBTEST_SOURCES EXCLUDE REGEX ".*Main.cpp$")
+file(GLOB LIBTEST_MAIN CONFIGURE_DEPENDS "../../Userland/Libraries/LibTest/TestMain.cpp")
 
 set(LAGOM_REGEX_SOURCES ${LIBREGEX_LIBC_SOURCES} ${LIBREGEX_SOURCES})
 set(LAGOM_CORE_SOURCES ${AK_SOURCES} ${LIBCORE_SOURCES})
-set(LAGOM_MORE_SOURCES ${LIBARCHIVE_SOURCES} ${LIBAUDIO_SOURCES} ${LIBELF_SOURCES} ${LIBIPC_SOURCES} ${LIBLINE_SOURCES} ${LIBJS_SOURCES} ${LIBJS_SUBDIR_SOURCES} ${LIBX86_SOURCES} ${LIBCRYPTO_SOURCES} ${LIBCOMPRESS_SOURCES} ${LIBCRYPTO_SUBDIR_SOURCES} ${LIBTLS_SOURCES} ${LIBTTF_SOURCES} ${LIBTEXTCODEC_SOURCES} ${LIBMARKDOWN_SOURCES} ${LIBGEMINI_SOURCES} ${LIBGFX_SOURCES} ${LIBGUI_GML_SOURCES} ${LIBHTTP_SOURCES} ${LAGOM_REGEX_SOURCES} ${SHELL_SOURCES})
+set(LAGOM_MORE_SOURCES ${LIBARCHIVE_SOURCES} ${LIBAUDIO_SOURCES} ${LIBELF_SOURCES} ${LIBIPC_SOURCES} ${LIBLINE_SOURCES} ${LIBJS_SOURCES} ${LIBJS_SUBDIR_SOURCES} ${LIBX86_SOURCES} ${LIBCRYPTO_SOURCES} ${LIBCOMPRESS_SOURCES} ${LIBCRYPTO_SUBDIR_SOURCES} ${LIBCRYPTO_SUBSUBDIR_SOURCES} ${LIBTLS_SOURCES} ${LIBTTF_SOURCES} ${LIBTEXTCODEC_SOURCES} ${LIBMARKDOWN_SOURCES} ${LIBGEMINI_SOURCES} ${LIBGFX_SOURCES} ${LIBGUI_GML_SOURCES} ${LIBHTTP_SOURCES} ${LAGOM_REGEX_SOURCES} ${SHELL_SOURCES} ${LIBSQL_SOURCES}  ${LIBWASM_SOURCES})
+set(LAGOM_TEST_SOURCES ${LIBTEST_SOURCES})
 
 # FIXME: This is a hack, because the lagom stuff can be build individually or
 #        in combination with the system, we generate two Debug.h files. One in
@@ -95,6 +111,7 @@ if (BUILD_LAGOM)
 
     if (NOT ENABLE_OSS_FUZZ AND NOT ENABLE_FUZZER_SANITIZER)
         enable_testing()
+        add_library(LagomTest $<TARGET_OBJECTS:LagomCore> ${LAGOM_TEST_SOURCES})
         add_executable(TestApp TestApp.cpp)
         target_link_libraries(TestApp Lagom)
         target_link_libraries(TestApp stdc++)
@@ -117,7 +134,9 @@ if (BUILD_LAGOM)
         set_target_properties(ntpquery_lagom PROPERTIES OUTPUT_NAME ntpquery)
         target_link_libraries(ntpquery_lagom Lagom)
 
-        add_executable(test-js_lagom ../../Userland/Utilities/test-js.cpp)
+        add_executable(test-js_lagom
+            ../../Tests/LibJS/test-js.cpp
+            ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
         set_target_properties(test-js_lagom PROPERTIES OUTPUT_NAME test-js)
         target_link_libraries(test-js_lagom Lagom)
         target_link_libraries(test-js_lagom stdc++)
@@ -138,15 +157,21 @@ if (BUILD_LAGOM)
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
 
-        add_executable(test-compress_lagom ../../Userland/Utilities/test-compress.cpp)
-        set_target_properties(test-compress_lagom PROPERTIES OUTPUT_NAME test-compress)
-        target_link_libraries(test-compress_lagom Lagom)
-        target_link_libraries(test-compress_lagom stdc++)
+        add_executable(test-wasm_lagom
+            ../../Tests/LibWasm/test-wasm.cpp
+            ../../Userland/Libraries/LibTest/JavaScriptTestRunnerMain.cpp)
+        set_target_properties(test-wasm_lagom PROPERTIES OUTPUT_NAME test-wasm)
+        target_link_libraries(test-wasm_lagom Lagom)
+        target_link_libraries(test-wasm_lagom stdc++)
+        target_link_libraries(test-wasm_lagom pthread)
         add_test(
-            NAME Compress
-            COMMAND test-compress_lagom
+            NAME WasmParser
+            COMMAND test-wasm_lagom --show-progress=false
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        set_tests_properties(WasmParser PROPERTIES
+            ENVIRONMENT SERENITY_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../..
+            SKIP_RETURN_CODE 1)
 
         add_executable(disasm_lagom ../../Userland/Utilities/disasm.cpp)
         set_target_properties(disasm_lagom PROPERTIES OUTPUT_NAME disasm)
@@ -164,6 +189,16 @@ if (BUILD_LAGOM)
         target_link_libraries(gml-format_lagom Lagom)
         target_link_libraries(gml-format_lagom stdc++)
 
+        add_executable(sql_lagom ../../Userland/Utilities/sql.cpp)
+        set_target_properties(sql_lagom PROPERTIES OUTPUT_NAME sql)
+        target_link_libraries(sql_lagom Lagom)
+        target_link_libraries(sql_lagom stdc++)
+
+        add_executable(wasm_lagom ../../Userland/Utilities/wasm.cpp)
+        set_target_properties(wasm_lagom PROPERTIES OUTPUT_NAME wasm)
+        target_link_libraries(wasm_lagom Lagom)
+        target_link_libraries(wasm_lagom stdc++)
+
         foreach(TEST_PATH ${SHELL_TESTS})
             get_filename_component(TEST_NAME ${TEST_PATH} NAME_WE)
             add_test(
@@ -180,20 +215,42 @@ if (BUILD_LAGOM)
 
         foreach(source ${AK_TEST_SOURCES})
             get_filename_component(name ${source} NAME_WE)
-            add_executable(${name}_lagom ${source})
-            target_link_libraries(${name}_lagom LagomCore)
+            add_executable(${name}_lagom ${source} ${LIBTEST_MAIN})
+            target_link_libraries(${name}_lagom LagomTest)
             add_test(
                 NAME ${name}_lagom
                 COMMAND ${name}_lagom
                 # FIXME: Only TestJSON needs this property
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../AK/Tests
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../Tests/AK
             )
         endforeach()
 
         foreach(source ${LIBREGEX_TESTS})
             get_filename_component(name ${source} NAME_WE)
-            add_executable(${name}_lagom ${source} ${LAGOM_REGEX_SOURCES})
-            target_link_libraries(${name}_lagom LagomCore)
+            add_executable(${name}_lagom ${source} ${LAGOM_REGEX_SOURCES} ${LIBTEST_MAIN})
+            target_link_libraries(${name}_lagom LagomTest)
+            add_test(
+                NAME ${name}_lagom
+                COMMAND ${name}_lagom
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
+        endforeach()
+
+        foreach(source ${LIBCOMPRESS_TESTS})
+            get_filename_component(name ${source} NAME_WE)
+            add_executable(${name}_lagom ${source} ${LIBCOMPRESS_SOURCES} ${LIBTEST_MAIN})
+            target_link_libraries(${name}_lagom Lagom LagomTest)
+            add_test(
+                    NAME ${name}_lagom
+                    COMMAND ${name}_lagom
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            )
+        endforeach()
+
+        foreach(source ${LIBSQL_TEST_SOURCES})
+            get_filename_component(name ${source} NAME_WE)
+            add_executable(${name}_lagom ${source} ${LIBSQL_SOURCES} ${LIBTEST_MAIN})
+            target_link_libraries(${name}_lagom LagomTest)
             add_test(
                 NAME ${name}_lagom
                 COMMAND ${name}_lagom

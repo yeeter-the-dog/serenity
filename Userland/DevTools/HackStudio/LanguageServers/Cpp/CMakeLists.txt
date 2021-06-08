@@ -1,6 +1,6 @@
 set(SOURCES
-    LexerAutoComplete.cpp
-    ParserAutoComplete.cpp
+    CppComprehensionEngine.cpp
+    Tests.cpp
     main.cpp
 )
 

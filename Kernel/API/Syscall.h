@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -42,158 +22,165 @@ struct timespec;
 struct sockaddr;
 struct siginfo;
 struct stat;
+struct statvfs;
 typedef u32 socklen_t;
 }
 
 namespace Kernel {
 
-#define ENUMERATE_SYSCALLS(S) \
-    S(yield)                  \
-    S(open)                   \
-    S(close)                  \
-    S(read)                   \
-    S(lseek)                  \
-    S(kill)                   \
-    S(getuid)                 \
-    S(exit)                   \
-    S(geteuid)                \
-    S(getegid)                \
-    S(getgid)                 \
-    S(getpid)                 \
-    S(getppid)                \
-    S(getresuid)              \
-    S(getresgid)              \
-    S(waitid)                 \
-    S(mmap)                   \
-    S(munmap)                 \
-    S(get_dir_entries)        \
-    S(getcwd)                 \
-    S(gettimeofday)           \
-    S(gethostname)            \
-    S(sethostname)            \
-    S(chdir)                  \
-    S(uname)                  \
-    S(set_mmap_name)          \
-    S(readlink)               \
-    S(write)                  \
-    S(ttyname)                \
-    S(stat)                   \
-    S(getsid)                 \
-    S(setsid)                 \
-    S(getpgid)                \
-    S(setpgid)                \
-    S(getpgrp)                \
-    S(fork)                   \
-    S(execve)                 \
-    S(dup2)                   \
-    S(sigaction)              \
-    S(umask)                  \
-    S(getgroups)              \
-    S(setgroups)              \
-    S(sigreturn)              \
-    S(sigprocmask)            \
-    S(sigpending)             \
-    S(pipe)                   \
-    S(killpg)                 \
-    S(seteuid)                \
-    S(setegid)                \
-    S(setuid)                 \
-    S(setgid)                 \
-    S(setresuid)              \
-    S(setresgid)              \
-    S(alarm)                  \
-    S(fstat)                  \
-    S(access)                 \
-    S(fcntl)                  \
-    S(ioctl)                  \
-    S(mkdir)                  \
-    S(times)                  \
-    S(utime)                  \
-    S(sync)                   \
-    S(ptsname)                \
-    S(select)                 \
-    S(unlink)                 \
-    S(poll)                   \
-    S(rmdir)                  \
-    S(chmod)                  \
-    S(socket)                 \
-    S(bind)                   \
-    S(accept)                 \
-    S(listen)                 \
-    S(connect)                \
-    S(link)                   \
-    S(chown)                  \
-    S(fchmod)                 \
-    S(symlink)                \
-    S(sendmsg)                \
-    S(recvmsg)                \
-    S(getsockopt)             \
-    S(setsockopt)             \
-    S(create_thread)          \
-    S(gettid)                 \
-    S(donate)                 \
-    S(rename)                 \
-    S(ftruncate)              \
-    S(exit_thread)            \
-    S(mknod)                  \
-    S(writev)                 \
-    S(beep)                   \
-    S(getsockname)            \
-    S(getpeername)            \
-    S(sched_setparam)         \
-    S(sched_getparam)         \
-    S(fchown)                 \
-    S(halt)                   \
-    S(reboot)                 \
-    S(mount)                  \
-    S(umount)                 \
-    S(dump_backtrace)         \
-    S(dbgputch)               \
-    S(dbgputstr)              \
-    S(watch_file)             \
-    S(mprotect)               \
-    S(realpath)               \
-    S(get_process_name)       \
-    S(fchdir)                 \
-    S(getrandom)              \
-    S(getkeymap)              \
-    S(setkeymap)              \
-    S(clock_gettime)          \
-    S(clock_settime)          \
-    S(clock_nanosleep)        \
-    S(join_thread)            \
-    S(module_load)            \
-    S(module_unload)          \
-    S(detach_thread)          \
-    S(set_thread_name)        \
-    S(get_thread_name)        \
-    S(madvise)                \
-    S(purge)                  \
-    S(profiling_enable)       \
-    S(profiling_disable)      \
-    S(futex)                  \
-    S(chroot)                 \
-    S(pledge)                 \
-    S(unveil)                 \
-    S(perf_event)             \
-    S(shutdown)               \
-    S(get_stack_bounds)       \
-    S(ptrace)                 \
-    S(sendfd)                 \
-    S(recvfd)                 \
-    S(sysconf)                \
-    S(set_process_name)       \
-    S(disown)                 \
-    S(adjtime)                \
-    S(allocate_tls)           \
-    S(prctl)                  \
-    S(mremap)                 \
-    S(set_coredump_metadata)  \
-    S(abort)                  \
-    S(anon_create)            \
-    S(msyscall)               \
-    S(readv)                  \
-    S(emuctl)
+#define ENUMERATE_SYSCALLS(S)     \
+    S(yield)                      \
+    S(open)                       \
+    S(close)                      \
+    S(read)                       \
+    S(lseek)                      \
+    S(kill)                       \
+    S(getuid)                     \
+    S(exit)                       \
+    S(geteuid)                    \
+    S(getegid)                    \
+    S(getgid)                     \
+    S(getpid)                     \
+    S(getppid)                    \
+    S(getresuid)                  \
+    S(getresgid)                  \
+    S(waitid)                     \
+    S(mmap)                       \
+    S(munmap)                     \
+    S(get_dir_entries)            \
+    S(getcwd)                     \
+    S(gettimeofday)               \
+    S(gethostname)                \
+    S(sethostname)                \
+    S(chdir)                      \
+    S(uname)                      \
+    S(set_mmap_name)              \
+    S(readlink)                   \
+    S(write)                      \
+    S(ttyname)                    \
+    S(stat)                       \
+    S(getsid)                     \
+    S(setsid)                     \
+    S(getpgid)                    \
+    S(setpgid)                    \
+    S(getpgrp)                    \
+    S(fork)                       \
+    S(execve)                     \
+    S(dup2)                       \
+    S(sigaction)                  \
+    S(umask)                      \
+    S(getgroups)                  \
+    S(setgroups)                  \
+    S(sigreturn)                  \
+    S(sigprocmask)                \
+    S(sigpending)                 \
+    S(pipe)                       \
+    S(killpg)                     \
+    S(seteuid)                    \
+    S(setegid)                    \
+    S(setuid)                     \
+    S(setgid)                     \
+    S(setreuid)                   \
+    S(setresuid)                  \
+    S(setresgid)                  \
+    S(alarm)                      \
+    S(fstat)                      \
+    S(access)                     \
+    S(fcntl)                      \
+    S(ioctl)                      \
+    S(mkdir)                      \
+    S(times)                      \
+    S(utime)                      \
+    S(sync)                       \
+    S(ptsname)                    \
+    S(select)                     \
+    S(unlink)                     \
+    S(poll)                       \
+    S(rmdir)                      \
+    S(chmod)                      \
+    S(socket)                     \
+    S(bind)                       \
+    S(accept4)                    \
+    S(listen)                     \
+    S(connect)                    \
+    S(link)                       \
+    S(chown)                      \
+    S(fchmod)                     \
+    S(symlink)                    \
+    S(sendmsg)                    \
+    S(recvmsg)                    \
+    S(getsockopt)                 \
+    S(setsockopt)                 \
+    S(create_thread)              \
+    S(gettid)                     \
+    S(donate)                     \
+    S(rename)                     \
+    S(ftruncate)                  \
+    S(exit_thread)                \
+    S(mknod)                      \
+    S(writev)                     \
+    S(beep)                       \
+    S(getsockname)                \
+    S(getpeername)                \
+    S(socketpair)                 \
+    S(sched_setparam)             \
+    S(sched_getparam)             \
+    S(fchown)                     \
+    S(halt)                       \
+    S(reboot)                     \
+    S(mount)                      \
+    S(umount)                     \
+    S(dump_backtrace)             \
+    S(dbgputch)                   \
+    S(dbgputstr)                  \
+    S(create_inode_watcher)       \
+    S(inode_watcher_add_watch)    \
+    S(inode_watcher_remove_watch) \
+    S(mprotect)                   \
+    S(realpath)                   \
+    S(get_process_name)           \
+    S(fchdir)                     \
+    S(getrandom)                  \
+    S(getkeymap)                  \
+    S(setkeymap)                  \
+    S(clock_gettime)              \
+    S(clock_settime)              \
+    S(clock_nanosleep)            \
+    S(join_thread)                \
+    S(module_load)                \
+    S(module_unload)              \
+    S(detach_thread)              \
+    S(set_thread_name)            \
+    S(get_thread_name)            \
+    S(madvise)                    \
+    S(purge)                      \
+    S(profiling_enable)           \
+    S(profiling_disable)          \
+    S(profiling_free_buffer)      \
+    S(futex)                      \
+    S(chroot)                     \
+    S(pledge)                     \
+    S(unveil)                     \
+    S(perf_event)                 \
+    S(shutdown)                   \
+    S(get_stack_bounds)           \
+    S(ptrace)                     \
+    S(sendfd)                     \
+    S(recvfd)                     \
+    S(sysconf)                    \
+    S(set_process_name)           \
+    S(disown)                     \
+    S(adjtime)                    \
+    S(allocate_tls)               \
+    S(prctl)                      \
+    S(mremap)                     \
+    S(set_coredump_metadata)      \
+    S(anon_create)                \
+    S(msyscall)                   \
+    S(readv)                      \
+    S(emuctl)                     \
+    S(statvfs)                    \
+    S(fstatvfs)
 
 namespace Syscall {
 
@@ -285,6 +272,13 @@ struct SC_clock_nanosleep_params {
     struct timespec* remaining_sleep;
 };
 
+struct SC_accept4_params {
+    int sockfd;
+    sockaddr* addr;
+    socklen_t* addrlen;
+    int flags;
+};
+
 struct SC_getsockopt_params {
     int sockfd;
     int level;
@@ -311,6 +305,13 @@ struct SC_getpeername_params {
     int sockfd;
     sockaddr* addr;
     socklen_t* addrlen;
+};
+
+struct SC_socketpair_params {
+    int domain;
+    int type;
+    int protocol;
+    int* sv;
 };
 
 struct SC_futex_params {
@@ -431,6 +432,7 @@ struct SC_waitid_params {
 };
 
 struct SC_stat_params {
+    int dirfd;
     StringArgument path;
     struct stat* statbuf;
     int follow_symlinks;
@@ -451,6 +453,17 @@ struct SC_ptrace_peek_params {
 struct SC_set_coredump_metadata_params {
     StringArgument key;
     StringArgument value;
+};
+
+struct SC_inode_watcher_add_watch_params {
+    int fd;
+    StringArgument user_path;
+    u32 event_mask;
+};
+
+struct SC_statvfs_params {
+    StringArgument path;
+    struct statvfs* buf;
 };
 
 void initialize();

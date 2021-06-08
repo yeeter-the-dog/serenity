@@ -1,29 +1,10 @@
 /*
  * Copyright (c) 2020, Fei Wu <f.eiwu@yahoo.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/LexicalPath.h>
 #include <AK/String.h>
@@ -33,6 +14,7 @@
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
 #include <LibCore/Object.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -123,9 +105,10 @@ int parse_args(int argc, char** argv, Vector<String>& files, DuOption& du_option
         du_option.excluded_patterns.append(pattern);
     if (exclude_from) {
         auto file = Core::File::construct(exclude_from);
-        bool success = file->open(Core::IODevice::ReadOnly);
+        bool success = file->open(Core::OpenMode::ReadOnly);
         VERIFY(success);
-        if (const auto buff = file->read_all()) {
+        const auto buff = file->read_all();
+        if (!buff.is_empty()) {
             String patterns = String::copy(buff, Chomp);
             du_option.excluded_patterns.append(patterns.split('\n'));
         }
@@ -153,7 +136,7 @@ int print_space_usage(const String& path, const DuOption& du_option, int max_dep
     if (--max_depth >= 0 && S_ISDIR(path_stat.st_mode)) {
         auto di = Core::DirIterator(path, Core::DirIterator::SkipParentAndBaseDir);
         if (di.has_error()) {
-            fprintf(stderr, "DirIterator: %s\n", di.error_string());
+            warnln("DirIterator: {}", di.error_string());
             return 1;
         }
         while (di.has_next()) {
@@ -171,7 +154,7 @@ int print_space_usage(const String& path, const DuOption& du_option, int max_dep
             return 0;
     }
 
-    long long size = path_stat.st_size;
+    off_t size = path_stat.st_size;
     if (du_option.apparent_size) {
         const auto block_size = 512;
         size = path_stat.st_blocks * block_size;
@@ -184,7 +167,7 @@ int print_space_usage(const String& path, const DuOption& du_option, int max_dep
     size = size / block_size + (size % block_size != 0);
 
     if (du_option.time_type == DuOption::TimeType::NotUsed)
-        printf("%lld\t%s\n", size, path.characters());
+        outln("{}\t{}", size, path);
     else {
         auto time = path_stat.st_mtime;
         switch (du_option.time_type) {
@@ -198,7 +181,7 @@ int print_space_usage(const String& path, const DuOption& du_option, int max_dep
         }
 
         const auto formatted_time = Core::DateTime::from_timestamp(time).to_string();
-        printf("%lld\t%s\t%s\n", size, formatted_time.characters(), path.characters());
+        outln("{}\t{}\t{}", size, formatted_time, path);
     }
 
     return 0;

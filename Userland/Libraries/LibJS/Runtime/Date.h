@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -35,9 +15,12 @@ class Date final : public Object {
     JS_OBJECT(Date, Object);
 
 public:
-    static Date* create(GlobalObject&, Core::DateTime, u16 milliseconds, bool is_invalid = false);
+    static constexpr double time_clip = 8.64e15;
 
-    Date(Core::DateTime datetime, u16 milliseconds, bool is_invalid, Object& prototype);
+    static Date* create(GlobalObject&, Core::DateTime, i16 milliseconds, bool is_invalid = false);
+    static Date* now(GlobalObject&);
+
+    Date(Core::DateTime datetime, i16 milliseconds, bool is_invalid, Object& prototype);
     virtual ~Date() override;
 
     Core::DateTime& datetime() { return m_datetime; }
@@ -45,14 +28,13 @@ public:
 
     int date() const { return datetime().day(); }
     int day() const { return datetime().weekday(); }
-    int full_year() const { return datetime().year(); }
     int hours() const { return datetime().hour(); }
-    u16 milliseconds() const { return m_milliseconds; }
+    i16 milliseconds() const { return m_milliseconds; }
     int minutes() const { return datetime().minute(); }
     int month() const { return datetime().month() - 1; }
     int seconds() const { return datetime().second(); }
     double time() const { return datetime().timestamp() * 1000.0 + milliseconds(); }
-    int year() const { return datetime().day(); }
+    int year() const { return datetime().year(); }
 
     bool is_invalid() const { return m_is_invalid; }
     void set_is_invalid(bool value) { m_is_invalid = value; }
@@ -66,7 +48,7 @@ public:
     int utc_month() const;
     int utc_seconds() const;
 
-    void set_milliseconds(u16 milliseconds)
+    void set_milliseconds(i16 milliseconds)
     {
         m_milliseconds = milliseconds;
     }
@@ -99,7 +81,7 @@ private:
     tm to_utc_tm() const;
 
     Core::DateTime m_datetime;
-    u16 m_milliseconds;
+    i16 m_milliseconds;
     bool m_is_invalid { false };
 };
 

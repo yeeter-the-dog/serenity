@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Srimanta Barua <srimanta.barua1@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -66,7 +46,7 @@ class Font : public RefCounted<Font> {
     AK_MAKE_NONCOPYABLE(Font);
 
 public:
-    static RefPtr<Font> load_from_file(const StringView& path, unsigned index = 0);
+    static RefPtr<Font> load_from_file(String path, unsigned index = 0);
     static RefPtr<Font> load_from_memory(ByteBuffer&, unsigned index = 0);
 
     ScaledFontMetrics metrics(float x_scale, float y_scale) const;
@@ -74,7 +54,7 @@ public:
     RefPtr<Gfx::Bitmap> raster_glyph(u32 glyph_id, float x_scale, float y_scale) const;
     u32 glyph_count() const;
     u16 units_per_em() const;
-    u32 glyph_id_for_codepoint(u32 codepoint) const { return m_cmap.glyph_id_for_codepoint(codepoint); }
+    u32 glyph_id_for_code_point(u32 code_point) const { return m_cmap.glyph_id_for_code_point(code_point); }
     String family() const;
     String variant() const;
     u16 weight() const;
@@ -130,7 +110,7 @@ public:
         m_x_scale = (point_width * dpi_x) / (POINTS_PER_INCH * units_per_em);
         m_y_scale = (point_height * dpi_y) / (POINTS_PER_INCH * units_per_em);
     }
-    u32 glyph_id_for_codepoint(u32 codepoint) const { return m_font->glyph_id_for_codepoint(codepoint); }
+    u32 glyph_id_for_code_point(u32 code_point) const { return m_font->glyph_id_for_code_point(code_point); }
     ScaledFontMetrics metrics() const { return m_font->metrics(m_x_scale, m_y_scale); }
     ScaledGlyphMetrics glyph_metrics(u32 glyph_id) const { return m_font->glyph_metrics(glyph_id, m_x_scale, m_y_scale); }
     RefPtr<Gfx::Bitmap> raster_glyph(u32 glyph_id) const;
@@ -140,7 +120,7 @@ public:
     virtual u8 presentation_size() const override { return m_point_height; }
     virtual u16 weight() const override { return m_font->weight(); }
     virtual Gfx::Glyph glyph(u32 code_point) const override;
-    virtual bool contains_glyph(u32 code_point) const override { return m_font->glyph_id_for_codepoint(code_point) > 0; }
+    virtual bool contains_glyph(u32 code_point) const override { return m_font->glyph_id_for_code_point(code_point) > 0; }
     virtual u8 glyph_width(size_t ch) const override;
     virtual int glyph_or_emoji_width(u32 code_point) const override;
     virtual u8 glyph_height() const override { return m_point_height; }
@@ -156,7 +136,7 @@ public:
     virtual String name() const override { return String::formatted("{} {}", family(), variant()); }
     virtual bool is_fixed_width() const override { return m_font->is_fixed_width(); }
     virtual u8 glyph_spacing() const override { return m_x_scale; } // FIXME: Read from font
-    virtual int glyph_count() const override { return m_font->glyph_count(); }
+    virtual size_t glyph_count() const override { return m_font->glyph_count(); }
     virtual String family() const override { return m_font->family(); }
     virtual String variant() const override { return m_font->variant(); }
     virtual String qualified_name() const override { return String::formatted("{} {} {}", family(), presentation_size(), weight()); }

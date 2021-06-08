@@ -1,29 +1,11 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
 #include <LibJS/AST.h>
 #include <LibJS/Interpreter.h>
@@ -73,13 +55,14 @@ void Interpreter::run(GlobalObject& global_object, const Program& program)
     global_call_frame.is_strict_mode = program.is_strict_mode();
     vm.push_call_frame(global_call_frame, global_object);
     VERIFY(!vm.exception());
-    program.execute(*this, global_object);
+    auto value = program.execute(*this, global_object);
+    vm.set_last_value({}, value.value_or(js_undefined()));
+
     vm.pop_call_frame();
 
-    // Whatever the promise jobs do should not affect the effective 'last value'.
-    auto last_value = vm.last_value();
+    // At this point we may have already run any queued promise jobs via on_call_stack_emptied,
+    // in which case this is a no-op.
     vm.run_queued_promise_jobs();
-    vm.set_last_value({}, last_value.value_or(js_undefined()));
 }
 
 GlobalObject& Interpreter::global_object()
@@ -94,13 +77,17 @@ const GlobalObject& Interpreter::global_object() const
 
 void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type, GlobalObject& global_object)
 {
-    for (auto& declaration : scope_node.functions()) {
-        auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.is_strict_mode());
-        vm().set_variable(declaration.name(), function, global_object);
-    }
+    ScopeGuard guard([&] {
+        for (auto& declaration : scope_node.functions()) {
+            auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.is_strict_mode());
+            vm().set_variable(declaration.name(), function, global_object);
+        }
+    });
 
     if (scope_type == ScopeType::Function) {
         push_scope({ scope_type, scope_node, false });
+        for (auto& declaration : scope_node.functions())
+            current_scope()->put_to_scope(declaration.name(), { js_undefined(), DeclarationKind::Var });
         return;
     }
 
@@ -110,11 +97,27 @@ void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type,
     for (auto& declaration : scope_node.variables()) {
         for (auto& declarator : declaration.declarations()) {
             if (is<Program>(scope_node)) {
-                global_object.put(declarator.id().string(), js_undefined());
+                declarator.target().visit(
+                    [&](const NonnullRefPtr<Identifier>& id) {
+                        global_object.put(id->string(), js_undefined());
+                    },
+                    [&](const NonnullRefPtr<BindingPattern>& binding) {
+                        binding->for_each_assigned_name([&](const auto& name) {
+                            global_object.put(name, js_undefined());
+                        });
+                    });
                 if (exception())
                     return;
             } else {
-                scope_variables_with_declaration_kind.set(declarator.id().string(), { js_undefined(), declaration.declaration_kind() });
+                declarator.target().visit(
+                    [&](const NonnullRefPtr<Identifier>& id) {
+                        scope_variables_with_declaration_kind.set(id->string(), { js_undefined(), declaration.declaration_kind() });
+                    },
+                    [&](const NonnullRefPtr<BindingPattern>& binding) {
+                        binding->for_each_assigned_name([&](const auto& name) {
+                            scope_variables_with_declaration_kind.set(name, { js_undefined(), declaration.declaration_kind() });
+                        });
+                    });
             }
         }
     }
@@ -142,7 +145,7 @@ void Interpreter::exit_scope(const ScopeNode& scope_node)
 
     // If we unwind all the way, just reset m_unwind_until so that future "return" doesn't break.
     if (m_scope_stack.is_empty())
-        vm().unwind(ScopeType::None);
+        vm().stop_unwind();
 }
 
 void Interpreter::push_scope(ScopeFrame frame)
@@ -158,10 +161,11 @@ Value Interpreter::execute_statement(GlobalObject& global_object, const Statemen
     auto& block = static_cast<const ScopeNode&>(statement);
     enter_scope(block, scope_type, global_object);
 
+    Value last_value;
     for (auto& node : block.children()) {
         auto value = node.execute(*this, global_object);
         if (!value.is_empty())
-            vm().set_last_value({}, value);
+            last_value = value;
         if (vm().should_unwind()) {
             if (!block.label().is_null() && vm().should_unwind_until(ScopeType::Breakable, block.label()))
                 vm().stop_unwind();
@@ -172,15 +176,15 @@ Value Interpreter::execute_statement(GlobalObject& global_object, const Statemen
     if (scope_type == ScopeType::Function) {
         bool did_return = vm().unwind_until() == ScopeType::Function;
         if (!did_return)
-            vm().set_last_value({}, js_undefined());
+            last_value = js_undefined();
     }
 
     if (vm().unwind_until() == scope_type)
-        vm().unwind(ScopeType::None);
+        vm().stop_unwind();
 
     exit_scope(block);
 
-    return vm().last_value();
+    return last_value;
 }
 
 LexicalEnvironment* Interpreter::current_environment()

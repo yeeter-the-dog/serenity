@@ -3,11 +3,21 @@
 CLion can integrate with CMake to provide code comprehension features.
 
 After opening the `serenity` repository in CLion as a new project, go to "`File->Settings->Build, Execution, Deployment->Cmake`",
-and set the following fields: (Assuming you use `Ninja` as the build system and configured the CMake build directory to `Build`)
+and set the following fields: (Assuming you use `Ninja` as the build system and configured the CMake build directory to `Build/i686`)
 
 `CMake Options`: `-G Ninja -DBUILD_LAGOM=ON -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10`
 
-`Build Directory`: `Build`
+`Build Directory`: `Build/i686`
+
+## Excluding Build Artifacts
+
+Source files are copied to the `Build` directory during the build, if you do not exclude them from CLion indexing they will show up
+in search results. This is often confusing, unintuitive, and can result in you losing changes you have made to files. To exclude
+these files navigate to the `Project` tool window, right-click the `Build` folder and select `Mark Directory as | Excluded`. If you
+want exclude Toolchain files as well, follow the same procedure with the following paths:
+- `Toolchain/Local`
+- `Toolchain/Tarballs`
+- `Toolchain/Build`
 
 ## Notes for WSL Users
 

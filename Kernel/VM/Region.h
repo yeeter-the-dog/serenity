@@ -1,38 +1,18 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
 #include <AK/EnumBits.h>
-#include <AK/InlineLinkedList.h>
-#include <AK/String.h>
+#include <AK/IntrusiveList.h>
 #include <AK/WeakPtr.h>
 #include <AK/Weakable.h>
 #include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Heap/SlabAllocator.h>
+#include <Kernel/KString.h>
 #include <Kernel/VM/PageFaultResponse.h>
 #include <Kernel/VM/PurgeablePageRanges.h>
 #include <Kernel/VM/RangeAllocator.h>
@@ -49,8 +29,7 @@ enum class ShouldFlushTLB {
 };
 
 class Region final
-    : public InlineLinkedListNode<Region>
-    , public Weakable<Region>
+    : public Weakable<Region>
     , public PurgeablePageRanges {
     friend class MemoryManager;
 
@@ -71,8 +50,8 @@ public:
         Yes,
     };
 
-    static NonnullOwnPtr<Region> create_user_accessible(Process*, const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, String name, Region::Access access, Cacheable, bool shared);
-    static NonnullOwnPtr<Region> create_kernel_only(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, String name, Region::Access access, Cacheable = Cacheable::Yes);
+    static NonnullOwnPtr<Region> create_user_accessible(Process*, const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable, bool shared);
+    static OwnPtr<Region> create_kernel_only(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable = Cacheable::Yes);
 
     ~Region();
 
@@ -88,10 +67,11 @@ public:
     bool has_been_executable() const { return m_access & Access::HasBeenExecutable; }
 
     bool is_cacheable() const { return m_cacheable; }
-    const String& name() const { return m_name; }
+    StringView name() const { return m_name ? m_name->view() : StringView {}; }
+    OwnPtr<KString> take_name() { return move(m_name); }
     Region::Access access() const { return static_cast<Region::Access>(m_access); }
 
-    void set_name(String name) { m_name = move(name); }
+    void set_name(OwnPtr<KString> name) { m_name = move(name); }
 
     const VMObject& vmobject() const { return *m_vmobject; }
     VMObject& vmobject() { return *m_vmobject; }
@@ -231,10 +211,6 @@ public:
 
     void remap();
 
-    // For InlineLinkedListNode
-    Region* m_next { nullptr };
-    Region* m_prev { nullptr };
-
     bool remap_vmobject_page_range(size_t page_index, size_t page_count);
 
     bool is_volatile(VirtualAddress vaddr, size_t size) const;
@@ -251,7 +227,7 @@ public:
     void set_syscall_region(bool b) { m_syscall_region = b; }
 
 private:
-    Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, String, Region::Access access, Cacheable, bool shared);
+    Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString>, Region::Access access, Cacheable, bool shared);
 
     bool do_remap_vmobject_page_range(size_t page_index, size_t page_count);
 
@@ -279,7 +255,7 @@ private:
     Range m_range;
     size_t m_offset_in_vmobject { 0 };
     NonnullRefPtr<VMObject> m_vmobject;
-    String m_name;
+    OwnPtr<KString> m_name;
     u8 m_access { Region::None };
     bool m_shared : 1 { false };
     bool m_cacheable : 1 { false };
@@ -287,6 +263,10 @@ private:
     bool m_mmap : 1 { false };
     bool m_syscall_region : 1 { false };
     WeakPtr<Process> m_owner;
+    IntrusiveListNode<Region> m_list_node;
+
+public:
+    using List = IntrusiveList<Region, RawPtr<Region>, &Region::m_list_node>;
 };
 
 AK_ENUM_BITWISE_OPERATORS(Region::Access)

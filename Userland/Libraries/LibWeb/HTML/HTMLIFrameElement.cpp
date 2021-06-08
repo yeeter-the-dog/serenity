@@ -1,39 +1,19 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/Layout/FrameBox.h>
 #include <LibWeb/Origin.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 
 namespace Web::HTML {
 
 HTMLIFrameElement::HTMLIFrameElement(DOM::Document& document, QualifiedName qualified_name)
-    : FrameHostElement(document, move(qualified_name))
+    : BrowsingContextContainer(document, move(qualified_name))
 {
 }
 
@@ -44,7 +24,7 @@ HTMLIFrameElement::~HTMLIFrameElement()
 RefPtr<Layout::Node> HTMLIFrameElement::create_layout_node()
 {
     auto style = document().style_resolver().resolve_style(*this);
-    return adopt(*new Layout::FrameBox(document(), *this, move(style)));
+    return adopt_ref(*new Layout::FrameBox(document(), *this, move(style)));
 }
 
 void HTMLIFrameElement::parse_attribute(const FlyString& name, const String& value)
@@ -56,14 +36,17 @@ void HTMLIFrameElement::parse_attribute(const FlyString& name, const String& val
 
 void HTMLIFrameElement::inserted()
 {
-    FrameHostElement::inserted();
+    BrowsingContextContainer::inserted();
     if (is_connected())
         load_src(attribute(HTML::AttributeNames::src));
 }
 
 void HTMLIFrameElement::load_src(const String& value)
 {
-    if (!m_content_frame)
+    if (!m_nested_browsing_context)
+        return;
+
+    if (value.is_null())
         return;
 
     auto url = document().complete_url(value);
@@ -77,7 +60,7 @@ void HTMLIFrameElement::load_src(const String& value)
     }
 
     dbgln("Loading iframe document from {}", value);
-    m_content_frame->loader().load(url, FrameLoader::Type::IFrame);
+    m_nested_browsing_context->loader().load(url, FrameLoader::Type::IFrame);
 }
 
 }

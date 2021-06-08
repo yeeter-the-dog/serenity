@@ -1,38 +1,17 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
- * Copyright (c) 2021 Glenford Williams <gw_dev@outlook.com>
- * All rights reserved.
+ * Copyright (c) 2021, Glenford Williams <gw_dev@outlook.com>
+ * Copyright (c) 2021, Max Wipfli <mail@maxwipfli.ch>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "CalculatorWidget.h"
-#include <AK/Assertions.h>
 #include <Applications/Calculator/CalculatorGML.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/TextBox.h>
 #include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
 
 CalculatorWidget::CalculatorWidget()
@@ -174,37 +153,32 @@ void CalculatorWidget::keydown_event(GUI::KeyEvent& event)
 
     if (event.key() == KeyCode::Key_Return) {
         m_keypad.set_value(m_calculator.finish_operation(m_keypad.value()));
-
-    } else if (event.key() >= KeyCode::Key_0 && event.key() <= KeyCode::Key_9) {
-        m_keypad.type_digit(atoi(event.text().characters()));
-
-    } else if (event.key() == KeyCode::Key_Period) {
+    } else if (event.code_point() >= '0' && event.code_point() <= '9') {
+        m_keypad.type_digit(event.code_point() - '0');
+    } else if (event.code_point() == '.') {
         m_keypad.type_decimal_point();
-
     } else if (event.key() == KeyCode::Key_Escape) {
         m_keypad.set_value(0.0);
         m_calculator.clear_operation();
-
     } else if (event.key() == KeyCode::Key_Backspace) {
         m_keypad.type_backspace();
-
     } else {
         Calculator::Operation operation;
 
-        switch (event.key()) {
-        case KeyCode::Key_Plus:
+        switch (event.code_point()) {
+        case '+':
             operation = Calculator::Operation::Add;
             break;
-        case KeyCode::Key_Minus:
+        case '-':
             operation = Calculator::Operation::Subtract;
             break;
-        case KeyCode::Key_Asterisk:
+        case '*':
             operation = Calculator::Operation::Multiply;
             break;
-        case KeyCode::Key_Slash:
+        case '/':
             operation = Calculator::Operation::Divide;
             break;
-        case KeyCode::Key_Percent:
+        case '%':
             operation = Calculator::Operation::Percent;
             break;
         default:

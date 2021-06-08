@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -44,7 +24,9 @@ namespace JS {
     P(LOG10E)                                \
     P(LOG2E)                                 \
     P(MAX_SAFE_INTEGER)                      \
+    P(MAX_VALUE)                             \
     P(MIN_SAFE_INTEGER)                      \
+    P(MIN_VALUE)                             \
     P(Math)                                  \
     P(NEGATIVE_INFINITY)                     \
     P(NaN)                                   \
@@ -64,6 +46,7 @@ namespace JS {
     P(acosh)                                 \
     P(all)                                   \
     P(allSettled)                            \
+    P(anchor)                                \
     P(any)                                   \
     P(apply)                                 \
     P(arguments)                             \
@@ -71,12 +54,18 @@ namespace JS {
     P(asUintN)                               \
     P(asin)                                  \
     P(asinh)                                 \
+    P(assert)                                \
     P(at)                                    \
     P(atan)                                  \
     P(atan2)                                 \
     P(atanh)                                 \
+    P(big)                                   \
     P(bind)                                  \
+    P(blink)                                 \
+    P(bold)                                  \
+    P(buffer)                                \
     P(byteLength)                            \
+    P(byteOffset)                            \
     P(call)                                  \
     P(callee)                                \
     P(cbrt)                                  \
@@ -94,16 +83,23 @@ namespace JS {
     P(cosh)                                  \
     P(count)                                 \
     P(countReset)                            \
+    P(create)                                \
     P(debug)                                 \
+    P(decodeURI)                             \
+    P(decodeURIComponent)                    \
+    P(defineProperties)                      \
     P(defineProperty)                        \
     P(deleteProperty)                        \
     P(description)                           \
     P(done)                                  \
     P(dotAll)                                \
+    P(encodeURI)                             \
+    P(encodeURIComponent)                    \
     P(endsWith)                              \
     P(entries)                               \
     P(enumerable)                            \
     P(error)                                 \
+    P(escape)                                \
     P(eval)                                  \
     P(every)                                 \
     P(exec)                                  \
@@ -114,9 +110,12 @@ namespace JS {
     P(finally)                               \
     P(find)                                  \
     P(findIndex)                             \
+    P(fixed)                                 \
     P(flags)                                 \
     P(flat)                                  \
     P(floor)                                 \
+    P(fontcolor)                             \
+    P(fontsize)                              \
     P(forEach)                               \
     P(freeze)                                \
     P(from)                                  \
@@ -136,6 +135,7 @@ namespace JS {
     P(getPrototypeOf)                        \
     P(getSeconds)                            \
     P(getTime)                               \
+    P(getTimezoneOffset)                     \
     P(getUTCDate)                            \
     P(getUTCDay)                             \
     P(getUTCFullYear)                        \
@@ -144,10 +144,12 @@ namespace JS {
     P(getUTCMinutes)                         \
     P(getUTCMonth)                           \
     P(getUTCSeconds)                         \
+    P(getYear)                               \
     P(global)                                \
     P(globalThis)                            \
     P(groups)                                \
     P(has)                                   \
+    P(hasOwn)                                \
     P(hasOwnProperty)                        \
     P(hypot)                                 \
     P(ignoreCase)                            \
@@ -168,12 +170,14 @@ namespace JS {
     P(isSafeInteger)                         \
     P(isSealed)                              \
     P(isView)                                \
+    P(italics)                               \
     P(join)                                  \
     P(keyFor)                                \
     P(keys)                                  \
     P(lastIndex)                             \
     P(lastIndexOf)                           \
     P(length)                                \
+    P(link)                                  \
     P(log)                                   \
     P(log1p)                                 \
     P(log2)                                  \
@@ -198,6 +202,7 @@ namespace JS {
     P(preventExtensions)                     \
     P(propertyIsEnumerable)                  \
     P(prototype)                             \
+    P(proxy)                                 \
     P(push)                                  \
     P(race)                                  \
     P(random)                                \
@@ -208,20 +213,34 @@ namespace JS {
     P(repeat)                                \
     P(resolve)                               \
     P(reverse)                               \
+    P(revocable)                             \
+    P(revoke)                                \
     P(round)                                 \
     P(seal)                                  \
     P(set)                                   \
+    P(setDate)                               \
     P(setFullYear)                           \
     P(setHours)                              \
     P(setMilliseconds)                       \
     P(setMinutes)                            \
+    P(setMonth)                              \
     P(setPrototypeOf)                        \
     P(setSeconds)                            \
+    P(setTime)                               \
+    P(setUTCDate)                            \
+    P(setUTCFullYear)                        \
+    P(setUTCHours)                           \
+    P(setUTCMilliseconds)                    \
+    P(setUTCMinutes)                         \
+    P(setUTCMonth)                           \
+    P(setUTCSeconds)                         \
+    P(setYear)                               \
     P(shift)                                 \
     P(sign)                                  \
     P(sin)                                   \
     P(sinh)                                  \
     P(slice)                                 \
+    P(small)                                 \
     P(some)                                  \
     P(sort)                                  \
     P(source)                                \
@@ -229,9 +248,12 @@ namespace JS {
     P(sqrt)                                  \
     P(startsWith)                            \
     P(sticky)                                \
+    P(strike)                                \
     P(stringify)                             \
+    P(sub)                                   \
     P(substr)                                \
     P(substring)                             \
+    P(sup)                                   \
     P(tan)                                   \
     P(tanh)                                  \
     P(test)                                  \
@@ -251,9 +273,12 @@ namespace JS {
     P(trace)                                 \
     P(trim)                                  \
     P(trimEnd)                               \
+    P(trimLeft)                              \
+    P(trimRight)                             \
     P(trimStart)                             \
     P(trunc)                                 \
     P(undefined)                             \
+    P(unescape)                              \
     P(unicode)                               \
     P(unshift)                               \
     P(value)                                 \

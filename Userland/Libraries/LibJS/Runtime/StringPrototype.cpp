@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <mail@linusgroh.de>
- * All rights reserved.
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Checked.h>
@@ -42,24 +22,12 @@
 
 namespace JS {
 
-static StringObject* typed_this(VM& vm, GlobalObject& global_object)
-{
-    auto* this_object = vm.this_value(global_object).to_object(global_object);
-    if (!this_object)
-        return nullptr;
-    if (!is<StringObject>(this_object)) {
-        vm.throw_exception<TypeError>(global_object, ErrorType::NotA, "String");
-        return nullptr;
-    }
-    return static_cast<StringObject*>(this_object);
-}
-
 static String ak_string_from(VM& vm, GlobalObject& global_object)
 {
-    auto* this_object = vm.this_value(global_object).to_object(global_object);
-    if (!this_object)
+    auto this_value = require_object_coercible(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    return Value(this_object).to_string(global_object);
+    return this_value.to_string(global_object);
 }
 
 static Optional<size_t> split_match(const String& haystack, size_t start, const String& needle)
@@ -84,7 +52,6 @@ void StringPrototype::initialize(GlobalObject& global_object)
     StringObject::initialize(global_object);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
-    define_native_property(vm.names.length, length_getter, nullptr, 0);
     define_native_function(vm.names.charAt, char_at, 1, attr);
     define_native_function(vm.names.charCodeAt, char_code_at, 1, attr);
     define_native_function(vm.names.repeat, repeat, 1, attr);
@@ -94,11 +61,14 @@ void StringPrototype::initialize(GlobalObject& global_object)
     define_native_function(vm.names.toLowerCase, to_lowercase, 0, attr);
     define_native_function(vm.names.toUpperCase, to_uppercase, 0, attr);
     define_native_function(vm.names.toString, to_string, 0, attr);
+    define_native_function(vm.names.valueOf, value_of, 0, attr);
     define_native_function(vm.names.padStart, pad_start, 1, attr);
     define_native_function(vm.names.padEnd, pad_end, 1, attr);
     define_native_function(vm.names.trim, trim, 0, attr);
     define_native_function(vm.names.trimStart, trim_start, 0, attr);
+    define_property(vm.names.trimLeft, get(vm.names.trimStart, {}, true), attr);
     define_native_function(vm.names.trimEnd, trim_end, 0, attr);
+    define_property(vm.names.trimRight, get(vm.names.trimEnd, {}, true), attr);
     define_native_function(vm.names.concat, concat, 1, attr);
     define_native_function(vm.names.substr, substr, 2, attr);
     define_native_function(vm.names.substring, substring, 2, attr);
@@ -109,11 +79,36 @@ void StringPrototype::initialize(GlobalObject& global_object)
     define_native_function(vm.names.at, at, 1, attr);
     define_native_function(vm.names.match, match, 1, attr);
     define_native_function(vm.names.replace, replace, 2, attr);
+    define_native_function(vm.names.anchor, anchor, 1, attr);
+    define_native_function(vm.names.big, big, 0, attr);
+    define_native_function(vm.names.blink, blink, 0, attr);
+    define_native_function(vm.names.bold, bold, 0, attr);
+    define_native_function(vm.names.fixed, fixed, 0, attr);
+    define_native_function(vm.names.fontcolor, fontcolor, 1, attr);
+    define_native_function(vm.names.fontsize, fontsize, 1, attr);
+    define_native_function(vm.names.italics, italics, 0, attr);
+    define_native_function(vm.names.link, link, 1, attr);
+    define_native_function(vm.names.small, small, 0, attr);
+    define_native_function(vm.names.strike, strike, 0, attr);
+    define_native_function(vm.names.sub, sub, 0, attr);
+    define_native_function(vm.names.sup, sup, 0, attr);
     define_native_function(vm.well_known_symbol_iterator(), symbol_iterator, 0, attr);
 }
 
 StringPrototype::~StringPrototype()
 {
+}
+
+// thisStringValue, https://tc39.es/ecma262/#thisstringvalue
+static Value this_string_value(GlobalObject& global_object, Value value)
+{
+    if (value.is_string())
+        return value;
+    if (value.is_object() && is<StringObject>(value.as_object()))
+        return static_cast<StringObject&>(value.as_object()).value_of();
+    auto& vm = global_object.vm();
+    vm.throw_exception<TypeError>(global_object, ErrorType::NotA, "String");
+    return {};
 }
 
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::char_at)
@@ -179,11 +174,21 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::starts_with)
     auto string = ak_string_from(vm, global_object);
     if (string.is_null())
         return {};
-    if (!vm.argument_count())
-        return Value(false);
-    auto search_string = vm.argument(0).to_string(global_object);
+
+    auto search_string_value = vm.argument(0);
+
+    bool search_is_regexp = search_string_value.is_regexp(global_object);
     if (vm.exception())
         return {};
+    if (search_is_regexp) {
+        vm.throw_exception<TypeError>(global_object, ErrorType::IsNotA, "searchString", "string, but a regular expression");
+        return {};
+    }
+
+    auto search_string = search_string_value.to_string(global_object);
+    if (vm.exception())
+        return {};
+
     auto string_length = string.length();
     auto search_string_length = search_string.length();
     size_t start = 0;
@@ -250,7 +255,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::index_of)
     auto needle = vm.argument(0).to_string(global_object);
     if (vm.exception())
         return {};
-    return Value((i32)string.index_of(needle).value_or(-1));
+    return Value((i32)string.find(needle).value_or(-1));
 }
 
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_lowercase)
@@ -269,20 +274,14 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_uppercase)
     return js_string(vm, string.to_uppercase());
 }
 
-JS_DEFINE_NATIVE_GETTER(StringPrototype::length_getter)
-{
-    auto* string_object = typed_this(vm, global_object);
-    if (!string_object)
-        return {};
-    return Value((i32)string_object->primitive_string().string().length());
-}
-
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_string)
 {
-    auto* string_object = typed_this(vm, global_object);
-    if (!string_object)
-        return {};
-    return js_string(vm, string_object->primitive_string().string());
+    return this_string_value(global_object, vm.this_value(global_object));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::value_of)
+{
+    return this_string_value(global_object, vm.this_value(global_object));
 }
 
 enum class PadPlacement {
@@ -424,28 +423,31 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::substr)
         return js_string(vm, string);
 
     // FIXME: this should index a UTF-16 code_point view of the string.
-    auto string_length = (i32)string.length();
+    auto size = (i32)string.length();
 
-    auto start_argument = vm.argument(0).to_i32(global_object);
+    auto int_start = vm.argument(0).to_integer_or_infinity(global_object);
+    if (vm.exception())
+        return {};
+    if (Value(int_start).is_negative_infinity())
+        int_start = 0;
+    if (int_start < 0)
+        int_start = max(size + (i32)int_start, 0);
+
+    auto length = vm.argument(1);
+
+    auto int_length = length.is_undefined() ? size : length.to_integer_or_infinity(global_object);
     if (vm.exception())
         return {};
 
-    auto start = start_argument < 0 ? (string_length - -start_argument) : start_argument;
-
-    auto length = string_length - start;
-    if (vm.argument_count() >= 2) {
-        auto length_argument = vm.argument(1).to_i32(global_object);
-        if (vm.exception())
-            return {};
-        length = max(0, min(length_argument, length));
-        if (vm.exception())
-            return {};
-    }
-
-    if (length == 0)
+    if (Value(int_start).is_positive_infinity() || (int_length <= 0) || Value(int_length).is_positive_infinity())
         return js_string(vm, String(""));
 
-    auto string_part = string.substring(start, length);
+    auto int_end = min((i32)(int_start + int_length), size);
+
+    if (int_start >= int_end)
+        return js_string(vm, String(""));
+
+    auto string_part = string.substring(int_start, int_end - int_start);
     return js_string(vm, string_part);
 }
 
@@ -528,7 +530,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::split)
     auto* result = Array::create(global_object);
     size_t result_len = 0;
 
-    auto limit = static_cast<u32>(MAX_U32);
+    auto limit = NumericLimits<u32>::max();
     if (!vm.argument(1).is_undefined()) {
         limit = vm.argument(1).to_u32(global_object);
         if (vm.exception())
@@ -642,12 +644,9 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::at)
 
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::symbol_iterator)
 {
-    auto this_object = vm.this_value(global_object);
-    if (this_object.is_nullish()) {
-        vm.throw_exception<TypeError>(global_object, ErrorType::ToObjectNullOrUndefined);
+    auto this_object = require_object_coercible(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    }
-
     auto string = this_object.to_string(global_object);
     if (vm.exception())
         return {};
@@ -657,11 +656,9 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::symbol_iterator)
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::match)
 {
     // https://tc39.es/ecma262/#sec-string.prototype.match
-    auto this_object = vm.this_value(global_object);
-    if (this_object.is_nullish()) {
-        vm.throw_exception<TypeError>(global_object, ErrorType::ToObjectNullOrUndefined);
+    auto this_object = require_object_coercible(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    }
     auto regexp = vm.argument(0);
     if (!regexp.is_nullish()) {
         if (auto* matcher = get_method(global_object, regexp, vm.well_known_symbol_match()))
@@ -679,12 +676,9 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::match)
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace)
 {
     // https://tc39.es/ecma262/#sec-string.prototype.replace
-    auto this_object = vm.this_value(global_object);
-    if (this_object.is_nullish()) {
-        vm.throw_exception<TypeError>(global_object, ErrorType::ToObjectNullOrUndefined);
+    auto this_object = require_object_coercible(global_object, vm.this_value(global_object));
+    if (vm.exception())
         return {};
-    }
-
     auto search_value = vm.argument(0);
     auto replace_value = vm.argument(1);
 
@@ -699,7 +693,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace)
     auto search_string = search_value.to_string(global_object);
     if (vm.exception())
         return {};
-    Optional<size_t> position = string.index_of(search_string);
+    Optional<size_t> position = string.find(search_string);
     if (!position.has_value())
         return js_string(vm, string);
 
@@ -727,6 +721,103 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace)
     builder.append(string.substring(position.value() + search_string.length()));
 
     return js_string(vm, builder.build());
+}
+
+// B.2.3.2.1
+static Value create_html(GlobalObject& global_object, Value string, const String& tag, const String& attribute, Value value)
+{
+    auto& vm = global_object.vm();
+    require_object_coercible(global_object, string);
+    if (vm.exception())
+        return {};
+    auto str = string.to_string(global_object);
+    if (vm.exception())
+        return {};
+    StringBuilder builder;
+    builder.append('<');
+    builder.append(tag);
+    if (!attribute.is_empty()) {
+        auto value_string = value.to_string(global_object);
+        if (vm.exception())
+            return {};
+        value_string.replace("\"", "&quot;", true);
+        builder.append(' ');
+        builder.append(attribute);
+        builder.append("=\"");
+        builder.append(value_string);
+        builder.append('"');
+    }
+    builder.append('>');
+    builder.append(str);
+    builder.append("</");
+    builder.append(tag);
+    builder.append('>');
+    return js_string(vm, builder.build());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::anchor)
+{
+    return create_html(global_object, vm.this_value(global_object), "a", "name", vm.argument(0));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::big)
+{
+    return create_html(global_object, vm.this_value(global_object), "big", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::blink)
+{
+    return create_html(global_object, vm.this_value(global_object), "blink", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::bold)
+{
+    return create_html(global_object, vm.this_value(global_object), "b", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::fixed)
+{
+    return create_html(global_object, vm.this_value(global_object), "tt", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::fontcolor)
+{
+    return create_html(global_object, vm.this_value(global_object), "font", "color", vm.argument(0));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::fontsize)
+{
+    return create_html(global_object, vm.this_value(global_object), "font", "size", vm.argument(0));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::italics)
+{
+    return create_html(global_object, vm.this_value(global_object), "i", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::link)
+{
+    return create_html(global_object, vm.this_value(global_object), "a", "href", vm.argument(0));
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::small)
+{
+    return create_html(global_object, vm.this_value(global_object), "small", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::strike)
+{
+    return create_html(global_object, vm.this_value(global_object), "strike", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::sub)
+{
+    return create_html(global_object, vm.this_value(global_object), "sub", String::empty(), Value());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::sup)
+{
+    return create_html(global_object, vm.this_value(global_object), "sup", String::empty(), Value());
 }
 
 }

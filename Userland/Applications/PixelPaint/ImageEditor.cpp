@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ImageEditor.h"
@@ -33,6 +13,8 @@
 #include <LibGUI/Painter.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/Rect.h>
+
+REGISTER_WIDGET(PixelPaint, ImageEditor);
 
 namespace PixelPaint {
 
@@ -68,7 +50,6 @@ void ImageEditor::did_complete_action()
 {
     if (!m_image)
         return;
-    m_undo_stack->finalize_current_combo();
     m_undo_stack->push(make<ImageUndoCommand>(*m_image));
 }
 
@@ -182,7 +163,7 @@ GUI::MouseEvent ImageEditor::event_with_pan_and_scale_applied(const GUI::MouseEv
 GUI::MouseEvent ImageEditor::event_adjusted_for_layer(const GUI::MouseEvent& event, const Layer& layer) const
 {
     auto image_position = editor_position_to_image_position(event.position());
-    image_position.move_by(-layer.location().x(), -layer.location().y());
+    image_position.translate_by(-layer.location().x(), -layer.location().y());
     return {
         static_cast<GUI::Event::Type>(event.type()),
         Gfx::IntPoint(image_position.x(), image_position.y()),
@@ -370,19 +351,24 @@ Layer* ImageEditor::layer_at_editor_position(const Gfx::IntPoint& editor_positio
     return nullptr;
 }
 
-void ImageEditor::scale_centered_on_position(const Gfx::IntPoint& position, float scale_delta)
+void ImageEditor::clamped_scale(float scale_delta)
 {
-    auto old_scale = m_scale;
-
     m_scale += scale_delta;
     if (m_scale < 0.1f)
         m_scale = 0.1f;
     if (m_scale > 100.0f)
         m_scale = 100.0f;
+}
 
-    auto focus_point = Gfx::FloatPoint(
-        m_pan_origin.x() - ((float)position.x() - (float)width() / 2.0) / old_scale,
-        m_pan_origin.y() - ((float)position.y() - (float)height() / 2.0) / old_scale);
+void ImageEditor::scale_centered_on_position(const Gfx::IntPoint& position, float scale_delta)
+{
+    auto old_scale = m_scale;
+    clamped_scale(scale_delta);
+
+    Gfx::FloatPoint focus_point {
+        m_pan_origin.x() - (position.x() - width() / 2.0f) / old_scale,
+        m_pan_origin.y() - (position.y() - height() / 2.0f) / old_scale
+    };
 
     m_pan_origin = Gfx::FloatPoint(
         focus_point.x() - m_scale / old_scale * (focus_point.x() - m_pan_origin.x()),
@@ -390,6 +376,23 @@ void ImageEditor::scale_centered_on_position(const Gfx::IntPoint& position, floa
 
     if (old_scale != m_scale)
         relayout();
+}
+
+void ImageEditor::scale_by(float scale_delta)
+{
+    if (scale_delta != 0) {
+        clamped_scale(scale_delta);
+        relayout();
+    }
+}
+
+void ImageEditor::reset_scale_and_position()
+{
+    if (m_scale != 1.0f)
+        m_scale = 1.0f;
+
+    m_pan_origin = Gfx::FloatPoint(0, 0);
+    relayout();
 }
 
 void ImageEditor::relayout()

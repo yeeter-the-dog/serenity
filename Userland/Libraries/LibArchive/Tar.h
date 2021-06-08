@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Peter Elliott <pelliott@ualberta.ca>
- * Copyright (c) 2021, Idan Horowitz <idan.horowitz@gmail.com>
- * All rights reserved.
+ * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -49,20 +29,23 @@ enum class TarFileType : char {
 };
 
 constexpr size_t block_size = 512;
-constexpr const char* gnu_magic = "ustar ";  // gnu format magic
-constexpr const char* gnu_version = " ";     // gnu format version
-constexpr const char* ustar_magic = "ustar"; // ustar format magic
-constexpr const char* ustar_version = "00";  // ustar format version
+constexpr const char* gnu_magic = "ustar ";    // gnu format magic
+constexpr const char* gnu_version = " ";       // gnu format version
+constexpr const char* ustar_magic = "ustar";   // ustar format magic
+constexpr const char* ustar_version = "00";    // ustar format version
+constexpr const char* posix1_tar_magic = "";   // POSIX.1-1988 format magic
+constexpr const char* posix1_tar_version = ""; // POSIX.1-1988 format version
 
 class [[gnu::packed]] TarFileHeader {
 public:
-    const StringView file_name() const { return m_file_name; }
+    const StringView filename() const { return m_filename; }
     mode_t mode() const { return get_tar_field(m_mode); }
     uid_t uid() const { return get_tar_field(m_uid); }
     gid_t gid() const { return get_tar_field(m_gid); }
     // FIXME: support 2001-star size encoding
     size_t size() const { return get_tar_field(m_size); }
     time_t timestamp() const { return get_tar_field(m_timestamp); }
+    unsigned checksum() const { return get_tar_field(m_checksum); }
     TarFileType type_flag() const { return TarFileType(m_type_flag); }
     const StringView link_name() const { return m_link_name; }
     const StringView magic() const { return StringView(m_magic, min(__builtin_strlen(m_magic), sizeof(m_magic))); }         // in some cases this is a null terminated string, in others its not
@@ -74,7 +57,7 @@ public:
     // FIXME: support ustar filename prefix
     const StringView prefix() const { return m_prefix; }
 
-    void set_file_name(const String& file_name) { VERIFY(file_name.copy_characters_to_buffer(m_file_name, sizeof(m_file_name))); }
+    void set_filename(const String& filename) { VERIFY(filename.copy_characters_to_buffer(m_filename, sizeof(m_filename))); }
     void set_mode(mode_t mode) { VERIFY(String::formatted("{:o}", mode).copy_characters_to_buffer(m_mode, sizeof(m_mode))); }
     void set_uid(uid_t uid) { VERIFY(String::formatted("{:o}", uid).copy_characters_to_buffer(m_uid, sizeof(m_uid))); }
     void set_gid(gid_t gid) { VERIFY(String::formatted("{:o}", gid).copy_characters_to_buffer(m_gid, sizeof(m_gid))); }
@@ -82,18 +65,19 @@ public:
     void set_timestamp(time_t timestamp) { VERIFY(String::formatted("{:o}", timestamp).copy_characters_to_buffer(m_timestamp, sizeof(m_timestamp))); }
     void set_type_flag(TarFileType type) { m_type_flag = static_cast<char>(type); }
     void set_link_name(const String& link_name) { VERIFY(link_name.copy_characters_to_buffer(m_link_name, sizeof(m_link_name))); }
-    void set_magic(const char* magic) { memcpy(m_magic, magic, sizeof(m_magic)); }           // magic doesnt necessarily include a null byte
-    void set_version(const char* version) { memcpy(m_version, version, sizeof(m_version)); } // version doesnt necessarily include a null byte
+    void set_magic(const char* magic) { memcpy(m_magic, magic, sizeof(m_magic)); }           // magic doesn't necessarily include a null byte
+    void set_version(const char* version) { memcpy(m_version, version, sizeof(m_version)); } // version doesn't necessarily include a null byte
     void set_owner_name(const String& owner_name) { VERIFY(owner_name.copy_characters_to_buffer(m_owner_name, sizeof(m_owner_name))); }
     void set_group_name(const String& group_name) { VERIFY(group_name.copy_characters_to_buffer(m_group_name, sizeof(m_group_name))); }
     void set_major(int major) { VERIFY(String::formatted("{:o}", major).copy_characters_to_buffer(m_major, sizeof(m_major))); }
     void set_minor(int minor) { VERIFY(String::formatted("{:o}", minor).copy_characters_to_buffer(m_minor, sizeof(m_minor))); }
     void set_prefix(const String& prefix) { VERIFY(prefix.copy_characters_to_buffer(m_prefix, sizeof(m_prefix))); }
 
+    unsigned expected_checksum() const;
     void calculate_checksum();
 
 private:
-    char m_file_name[100];
+    char m_filename[100];
     char m_mode[8];
     char m_uid[8];
     char m_gid[8];
@@ -127,15 +111,6 @@ size_t TarFileHeader::get_tar_field(const char (&field)[N])
         value += field[i] - '0';
     }
     return value;
-}
-void TarFileHeader::calculate_checksum()
-{
-    memset(m_checksum, ' ', sizeof(m_checksum));
-    auto checksum = 0u;
-    for (auto i = 0u; i < sizeof(TarFileHeader); ++i) {
-        checksum += ((unsigned char*)this)[i];
-    }
-    VERIFY(String::formatted("{:o}", checksum).copy_characters_to_buffer(m_checksum, sizeof(m_checksum)));
 }
 
 }

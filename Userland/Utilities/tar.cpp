@@ -1,29 +1,10 @@
 /*
  * Copyright (c) 2020, Peter Elliott <pelliott@ualberta.ca>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/LexicalPath.h>
 #include <AK/Span.h>
 #include <AK/Vector.h>
@@ -68,7 +49,7 @@ int main(int argc, char** argv)
         auto file = Core::File::standard_input();
 
         if (archive_file) {
-            auto maybe_file = Core::File::open(archive_file, Core::IODevice::OpenMode::ReadOnly);
+            auto maybe_file = Core::File::open(archive_file, Core::OpenMode::ReadOnly);
             if (maybe_file.is_error()) {
                 warnln("Core::File::open: {}", maybe_file.error());
                 return 1;
@@ -88,7 +69,7 @@ int main(int argc, char** argv)
         }
         for (; !tar_stream.finished(); tar_stream.advance()) {
             if (list || verbose)
-                outln("{}", tar_stream.header().file_name());
+                outln("{}", tar_stream.header().filename());
 
             if (extract) {
                 Archive::TarFileStream file_stream = tar_stream.file_contents();
@@ -97,7 +78,7 @@ int main(int argc, char** argv)
                 switch (header.type_flag()) {
                 case Archive::TarFileType::NormalFile:
                 case Archive::TarFileType::AlternateNormalFile: {
-                    int fd = open(String(header.file_name()).characters(), O_CREAT | O_WRONLY, header.mode());
+                    int fd = open(String(header.filename()).characters(), O_CREAT | O_WRONLY, header.mode());
                     if (fd < 0) {
                         perror("open");
                         return 1;
@@ -115,14 +96,23 @@ int main(int argc, char** argv)
                     break;
                 }
                 case Archive::TarFileType::Directory: {
-                    if (mkdir(String(header.file_name()).characters(), header.mode())) {
+                    if (mkdir(String(header.filename()).characters(), header.mode())) {
                         perror("mkdir");
                         return 1;
                     }
                     break;
                 }
+                case Archive::TarFileType::GlobalExtendedHeader: {
+                    dbgln("ignoring global extended header: {}", header.filename());
+                    break;
+                }
+                case Archive::TarFileType::ExtendedHeader: {
+                    dbgln("ignoring extended header: {}", header.filename());
+                    break;
+                }
                 default:
                     // FIXME: Implement other file types
+                    warnln("file type '{}' of {} is not yet supported", (char)header.type_flag(), header.filename());
                     VERIFY_NOT_REACHED();
                 }
             }
@@ -140,7 +130,7 @@ int main(int argc, char** argv)
         auto file = Core::File::standard_output();
 
         if (archive_file) {
-            auto maybe_file = Core::File::open(archive_file, Core::IODevice::OpenMode::WriteOnly);
+            auto maybe_file = Core::File::open(archive_file, Core::OpenMode::WriteOnly);
             if (maybe_file.is_error()) {
                 warnln("Core::File::open: {}", maybe_file.error());
                 return 1;
@@ -157,7 +147,7 @@ int main(int argc, char** argv)
 
         auto add_file = [&](String path) {
             auto file = Core::File::construct(path);
-            if (!file->open(Core::IODevice::ReadOnly)) {
+            if (!file->open(Core::OpenMode::ReadOnly)) {
                 warnln("Failed to open {}: {}", path, file->error_string());
                 return;
             }
@@ -195,7 +185,7 @@ int main(int argc, char** argv)
             }
         };
 
-        for (const String& path : paths) {
+        for (auto const& path : paths) {
             if (Core::File::is_directory(path)) {
                 add_directory(path, add_directory);
             } else {

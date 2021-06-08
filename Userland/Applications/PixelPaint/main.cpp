@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "CreateNewImageDialog.h"
@@ -36,86 +16,88 @@
 #include "Tool.h"
 #include "ToolPropertiesWidget.h"
 #include "ToolboxWidget.h"
+#include <Applications/PixelPaint/PixelPaintWindowGML.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
-#include <LibGUI/BoxLayout.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/FilePicker.h>
 #include <LibGUI/Icon.h>
-#include <LibGUI/MenuBar.h>
+#include <LibGUI/Menubar.h>
 #include <LibGUI/MessageBox.h>
+#include <LibGUI/Statusbar.h>
+#include <LibGUI/Toolbar.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Matrix4x4.h>
 #include <stdio.h>
 #include <unistd.h>
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio thread recvfd sendfd accept rpath unix wpath cpath fattr", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd rpath unix wpath cpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio thread recvfd sendfd accept rpath wpath cpath", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd rpath wpath cpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     const char* image_file = nullptr;
     Core::ArgsParser args_parser;
-    args_parser.add_positional_argument(image_file, "PixelPaint image file (*.pp) to open", "path", Core::ArgsParser::Required::No);
+    args_parser.add_positional_argument(image_file, "Image file to open", "path", Core::ArgsParser::Required::No);
     args_parser.parse(argc, argv);
 
     auto app_icon = GUI::Icon::default_icon("app-pixel-paint");
 
     auto window = GUI::Window::construct();
-    window->set_title("PixelPaint");
-    window->resize(950, 570);
+    window->set_title("Pixel Paint");
+    window->resize(800, 480);
     window->set_icon(app_icon.bitmap_for_size(16));
 
-    auto& horizontal_container = window->set_main_widget<GUI::Widget>();
-    horizontal_container.set_layout<GUI::HorizontalBoxLayout>();
-    horizontal_container.layout()->set_spacing(0);
+    auto& main_widget = window->set_main_widget<GUI::Widget>();
+    main_widget.load_from_gml(pixel_paint_window_gml);
 
-    auto& toolbox = horizontal_container.add<PixelPaint::ToolboxWidget>();
-
-    auto& vertical_container = horizontal_container.add<GUI::Widget>();
-    vertical_container.set_layout<GUI::VerticalBoxLayout>();
-    vertical_container.layout()->set_spacing(0);
-
-    auto& image_editor = vertical_container.add<PixelPaint::ImageEditor>();
+    auto& toolbox = *main_widget.find_descendant_of_type_named<PixelPaint::ToolboxWidget>("toolbox");
+    auto& image_editor = *main_widget.find_descendant_of_type_named<PixelPaint::ImageEditor>("image_editor");
     image_editor.set_focus(true);
 
-    vertical_container.add<PixelPaint::PaletteWidget>(image_editor);
+    auto& palette_widget = *main_widget.find_descendant_of_type_named<PixelPaint::PaletteWidget>("palette_widget");
+    palette_widget.set_image_editor(image_editor);
 
-    auto& right_panel = horizontal_container.add<GUI::Widget>();
-    right_panel.set_fill_with_background_color(true);
-    right_panel.set_fixed_width(230);
-    right_panel.set_layout<GUI::VerticalBoxLayout>();
-
-    auto& layer_list_widget = right_panel.add<PixelPaint::LayerListWidget>();
+    auto& layer_list_widget = *main_widget.find_descendant_of_type_named<PixelPaint::LayerListWidget>("layer_list_widget");
     layer_list_widget.on_layer_select = [&](auto* layer) {
         image_editor.set_active_layer(layer);
     };
 
-    auto& layer_properties_widget = right_panel.add<PixelPaint::LayerPropertiesWidget>();
+    auto& layer_properties_widget = *main_widget.find_descendant_of_type_named<PixelPaint::LayerPropertiesWidget>("layer_properties_widget");
 
-    auto& tool_properties_widget = right_panel.add<PixelPaint::ToolPropertiesWidget>();
+    auto& tool_properties_widget = *main_widget.find_descendant_of_type_named<PixelPaint::ToolPropertiesWidget>("tool_properties_widget");
 
     toolbox.on_tool_selection = [&](auto* tool) {
         image_editor.set_active_tool(tool);
         tool_properties_widget.set_active_tool(tool);
     };
 
-    window->show();
+    auto new_image_action = GUI::Action::create(
+        "&New Image...", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"), [&](auto&) {
+            auto dialog = PixelPaint::CreateNewImageDialog::construct(window);
+            if (dialog->exec() == GUI::Dialog::ExecOK) {
+                auto image = PixelPaint::Image::create_with_size(dialog->image_size());
+                auto bg_layer = PixelPaint::Layer::create_with_size(*image, image->size(), "Background");
+                image->add_layer(*bg_layer);
+                bg_layer->bitmap().fill(Color::White);
 
-    auto menubar = GUI::MenuBar::construct();
-    auto& app_menu = menubar->add_menu("File");
+                image_editor.set_image(image);
+                layer_list_widget.set_image(image);
+                image_editor.set_active_layer(bg_layer);
+            }
+        },
+        window);
 
     auto open_image_file = [&](auto& path) {
         auto image = PixelPaint::Image::create_from_file(path);
@@ -127,59 +109,43 @@ int main(int argc, char** argv)
         layer_list_widget.set_image(image);
     };
 
-    app_menu.add_action(
-        GUI::Action::create(
-            "New", [&](auto&) {
-                auto dialog = PixelPaint::CreateNewImageDialog::construct(window);
-                if (dialog->exec() == GUI::Dialog::ExecOK) {
-                    auto image = PixelPaint::Image::create_with_size(dialog->image_size());
-                    auto bg_layer = PixelPaint::Layer::create_with_size(*image, image->size(), "Background");
-                    image->add_layer(*bg_layer);
-                    bg_layer->bitmap().fill(Color::White);
-
-                    image_editor.set_image(image);
-                    layer_list_widget.set_image(image);
-                    image_editor.set_active_layer(bg_layer);
-                }
-            },
-            window));
-    app_menu.add_action(GUI::CommonActions::make_open_action([&](auto&) {
+    auto open_image_action = GUI::CommonActions::make_open_action([&](auto&) {
         Optional<String> open_path = GUI::FilePicker::get_open_filepath(window);
-
         if (!open_path.has_value())
             return;
-
         open_image_file(open_path.value());
-    }));
-    app_menu.add_action(GUI::CommonActions::make_save_as_action([&](auto&) {
+    });
+
+    auto save_image_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
         if (!image_editor.image())
             return;
-
         Optional<String> save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "pp");
-
         if (!save_path.has_value())
             return;
-
         image_editor.image()->save(save_path.value());
-    }));
-    auto& export_submenu = app_menu.add_submenu("Export");
+    });
+
+    auto menubar = GUI::Menubar::construct();
+    auto& file_menu = menubar->add_menu("&File");
+
+    file_menu.add_action(new_image_action);
+    file_menu.add_action(open_image_action);
+    file_menu.add_action(save_image_as_action);
+    auto& export_submenu = file_menu.add_submenu("&Export");
     export_submenu.add_action(
         GUI::Action::create(
-            "As BMP", [&](auto&) {
+            "As &BMP", [&](auto&) {
                 if (!image_editor.image())
                     return;
-
                 Optional<String> save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "bmp");
-
                 if (!save_path.has_value())
                     return;
-
                 image_editor.image()->export_bmp(save_path.value());
             },
             window));
     export_submenu.add_action(
         GUI::Action::create(
-            "As PNG", [&](auto&) {
+            "As &PNG", [&](auto&) {
                 if (!image_editor.image())
                     return;
 
@@ -192,13 +158,12 @@ int main(int argc, char** argv)
             },
             window));
 
-    app_menu.add_separator();
-    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    file_menu.add_separator();
+    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
-        return;
     }));
 
-    auto& edit_menu = menubar->add_menu("Edit");
+    auto& edit_menu = menubar->add_menu("&Edit");
     auto paste_action = GUI::CommonActions::make_paste_action([&](auto&) {
         VERIFY(image_editor.image());
         auto bitmap = GUI::Clipboard::the().bitmap();
@@ -227,16 +192,40 @@ int main(int argc, char** argv)
     });
     edit_menu.add_action(redo_action);
 
-    auto& tool_menu = menubar->add_menu("Tool");
+    auto& view_menu = menubar->add_menu("&View");
+
+    auto zoom_in_action = GUI::CommonActions::make_zoom_in_action(
+        [&](auto&) {
+            image_editor.scale_by(0.1f);
+        },
+        window);
+
+    auto zoom_out_action = GUI::CommonActions::make_zoom_out_action(
+        [&](auto&) {
+            image_editor.scale_by(-0.1f);
+        },
+        window);
+
+    auto reset_zoom_action = GUI::CommonActions::make_reset_zoom_action(
+        [&](auto&) {
+            image_editor.reset_scale_and_position();
+        },
+        window);
+
+    view_menu.add_action(zoom_in_action);
+    view_menu.add_action(zoom_out_action);
+    view_menu.add_action(reset_zoom_action);
+
+    auto& tool_menu = menubar->add_menu("&Tool");
     toolbox.for_each_tool([&](auto& tool) {
         if (tool.action())
             tool_menu.add_action(*tool.action());
         return IterationDecision::Continue;
     });
 
-    auto& layer_menu = menubar->add_menu("Layer");
+    auto& layer_menu = menubar->add_menu("&Layer");
     layer_menu.add_action(GUI::Action::create(
-        "Create new layer...", { Mod_Ctrl | Mod_Shift, Key_N }, [&](auto&) {
+        "New &Layer...", { Mod_Ctrl | Mod_Shift, Key_N }, [&](auto&) {
             auto dialog = PixelPaint::CreateNewLayerDialog::construct(image_editor.image()->size(), window);
             if (dialog->exec() == GUI::Dialog::ExecOK) {
                 auto layer = PixelPaint::Layer::create_with_size(*image_editor.image(), dialog->layer_size(), dialog->layer_name());
@@ -252,28 +241,28 @@ int main(int argc, char** argv)
 
     layer_menu.add_separator();
     layer_menu.add_action(GUI::Action::create(
-        "Select previous layer", { 0, Key_PageUp }, [&](auto&) {
+        "Select &Previous Layer", { 0, Key_PageUp }, [&](auto&) {
             layer_list_widget.move_selection(1);
         },
         window));
     layer_menu.add_action(GUI::Action::create(
-        "Select next layer", { 0, Key_PageDown }, [&](auto&) {
+        "Select &Next Layer", { 0, Key_PageDown }, [&](auto&) {
             layer_list_widget.move_selection(-1);
         },
         window));
     layer_menu.add_action(GUI::Action::create(
-        "Select top layer", { 0, Key_Home }, [&](auto&) {
+        "Select &Top Layer", { 0, Key_Home }, [&](auto&) {
             layer_list_widget.select_top_layer();
         },
         window));
     layer_menu.add_action(GUI::Action::create(
-        "Select bottom layer", { 0, Key_End }, [&](auto&) {
+        "Select &Bottom Layer", { 0, Key_End }, [&](auto&) {
             layer_list_widget.select_bottom_layer();
         },
         window));
     layer_menu.add_separator();
     layer_menu.add_action(GUI::Action::create(
-        "Move active layer up", { Mod_Ctrl, Key_PageUp }, [&](auto&) {
+        "Move Active Layer &Up", { Mod_Ctrl, Key_PageUp }, [&](auto&) {
             auto active_layer = image_editor.active_layer();
             if (!active_layer)
                 return;
@@ -281,7 +270,7 @@ int main(int argc, char** argv)
         },
         window));
     layer_menu.add_action(GUI::Action::create(
-        "Move active layer down", { Mod_Ctrl, Key_PageDown }, [&](auto&) {
+        "Move Active Layer &Down", { Mod_Ctrl, Key_PageDown }, [&](auto&) {
             auto active_layer = image_editor.active_layer();
             if (!active_layer)
                 return;
@@ -290,7 +279,7 @@ int main(int argc, char** argv)
         window));
     layer_menu.add_separator();
     layer_menu.add_action(GUI::Action::create(
-        "Remove active layer", { Mod_Ctrl, Key_D }, [&](auto&) {
+        "&Remove Active Layer", { Mod_Ctrl, Key_D }, [&](auto&) {
             auto active_layer = image_editor.active_layer();
             if (!active_layer)
                 return;
@@ -299,11 +288,11 @@ int main(int argc, char** argv)
         },
         window));
 
-    auto& filter_menu = menubar->add_menu("Filter");
-    auto& spatial_filters_menu = filter_menu.add_submenu("Spatial");
+    auto& filter_menu = menubar->add_menu("&Filter");
+    auto& spatial_filters_menu = filter_menu.add_submenu("&Spatial");
 
-    auto& edge_detect_submenu = spatial_filters_menu.add_submenu("Edge Detect");
-    edge_detect_submenu.add_action(GUI::Action::create("Laplacian (cardinal)", [&](auto&) {
+    auto& edge_detect_submenu = spatial_filters_menu.add_submenu("&Edge Detect");
+    edge_detect_submenu.add_action(GUI::Action::create("Laplacian (&Cardinal)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::LaplacianFilter filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::LaplacianFilter>::get(false)) {
@@ -312,7 +301,7 @@ int main(int argc, char** argv)
             }
         }
     }));
-    edge_detect_submenu.add_action(GUI::Action::create("Laplacian (diagonal)", [&](auto&) {
+    edge_detect_submenu.add_action(GUI::Action::create("Laplacian (&Diagonal)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::LaplacianFilter filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::LaplacianFilter>::get(true)) {
@@ -321,8 +310,8 @@ int main(int argc, char** argv)
             }
         }
     }));
-    auto& blur_submenu = spatial_filters_menu.add_submenu("Blur and Sharpen");
-    blur_submenu.add_action(GUI::Action::create("Gaussian Blur (3x3)", [&](auto&) {
+    auto& blur_submenu = spatial_filters_menu.add_submenu("&Blur and Sharpen");
+    blur_submenu.add_action(GUI::Action::create("&Gaussian Blur (3x3)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::SpatialGaussianBlurFilter<3> filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::SpatialGaussianBlurFilter<3>>::get()) {
@@ -331,7 +320,7 @@ int main(int argc, char** argv)
             }
         }
     }));
-    blur_submenu.add_action(GUI::Action::create("Gaussian Blur (5x5)", [&](auto&) {
+    blur_submenu.add_action(GUI::Action::create("G&aussian Blur (5x5)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::SpatialGaussianBlurFilter<5> filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::SpatialGaussianBlurFilter<5>>::get()) {
@@ -340,7 +329,7 @@ int main(int argc, char** argv)
             }
         }
     }));
-    blur_submenu.add_action(GUI::Action::create("Box Blur (3x3)", [&](auto&) {
+    blur_submenu.add_action(GUI::Action::create("&Box Blur (3x3)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::BoxBlurFilter<3> filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::BoxBlurFilter<3>>::get()) {
@@ -349,7 +338,7 @@ int main(int argc, char** argv)
             }
         }
     }));
-    blur_submenu.add_action(GUI::Action::create("Box Blur (5x5)", [&](auto&) {
+    blur_submenu.add_action(GUI::Action::create("B&ox Blur (5x5)", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::BoxBlurFilter<5> filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::BoxBlurFilter<5>>::get()) {
@@ -358,7 +347,7 @@ int main(int argc, char** argv)
             }
         }
     }));
-    blur_submenu.add_action(GUI::Action::create("Sharpen", [&](auto&) {
+    blur_submenu.add_action(GUI::Action::create("&Sharpen", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::SharpenFilter filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::SharpenFilter>::get()) {
@@ -369,7 +358,7 @@ int main(int argc, char** argv)
     }));
 
     spatial_filters_menu.add_separator();
-    spatial_filters_menu.add_action(GUI::Action::create("Generic 5x5 Convolution", [&](auto&) {
+    spatial_filters_menu.add_action(GUI::Action::create("Generic 5x5 &Convolution", [&](auto&) {
         if (auto* layer = image_editor.active_layer()) {
             Gfx::GenericConvolutionFilter<5> filter;
             if (auto parameters = PixelPaint::FilterParameters<Gfx::GenericConvolutionFilter<5>>::get(window)) {
@@ -379,10 +368,23 @@ int main(int argc, char** argv)
         }
     }));
 
-    auto& help_menu = menubar->add_menu("Help");
-    help_menu.add_action(GUI::CommonActions::make_about_action("PixelPaint", app_icon, window));
+    auto& help_menu = menubar->add_menu("&Help");
+    help_menu.add_action(GUI::CommonActions::make_about_action("Pixel Paint", app_icon, window));
 
     window->set_menubar(move(menubar));
+
+    auto& toolbar = *main_widget.find_descendant_of_type_named<GUI::Toolbar>("toolbar");
+    toolbar.add_action(new_image_action);
+    toolbar.add_action(open_image_action);
+    toolbar.add_action(save_image_as_action);
+    toolbar.add_separator();
+    toolbar.add_action(paste_action);
+    toolbar.add_action(undo_action);
+    toolbar.add_action(redo_action);
+    toolbar.add_separator();
+    toolbar.add_action(zoom_in_action);
+    toolbar.add_action(zoom_out_action);
+    toolbar.add_action(reset_zoom_action);
 
     image_editor.on_active_layer_change = [&](auto* layer) {
         layer_list_widget.set_selected_layer(layer);
@@ -393,21 +395,11 @@ int main(int argc, char** argv)
     if (Core::File::exists(image_file_real_path)) {
         open_image_file(image_file_real_path);
     } else {
-        auto image = PixelPaint::Image::create_with_size({ 640, 480 });
+        auto image = PixelPaint::Image::create_with_size({ 480, 360 });
 
-        auto bg_layer = PixelPaint::Layer::create_with_size(*image, { 640, 480 }, "Background");
+        auto bg_layer = PixelPaint::Layer::create_with_size(*image, image->size(), "Background");
         image->add_layer(*bg_layer);
         bg_layer->bitmap().fill(Color::White);
-
-        auto fg_layer1 = PixelPaint::Layer::create_with_size(*image, { 200, 200 }, "FG Layer 1");
-        fg_layer1->set_location({ 50, 50 });
-        image->add_layer(*fg_layer1);
-        fg_layer1->bitmap().fill(Color::Yellow);
-
-        auto fg_layer2 = PixelPaint::Layer::create_with_size(*image, { 100, 100 }, "FG Layer 2");
-        fg_layer2->set_location({ 300, 300 });
-        image->add_layer(*fg_layer2);
-        fg_layer2->bitmap().fill(Color::Blue);
 
         layer_list_widget.set_image(image);
 
@@ -415,5 +407,19 @@ int main(int argc, char** argv)
         image_editor.set_active_layer(bg_layer);
     }
 
+    auto& statusbar = *main_widget.find_descendant_of_type_named<GUI::Statusbar>("statusbar");
+
+    app->on_action_enter = [&statusbar](GUI::Action& action) {
+        auto text = action.status_tip();
+        if (text.is_empty())
+            text = Gfx::parse_ampersand_string(action.text());
+        statusbar.set_override_text(move(text));
+    };
+
+    app->on_action_leave = [&statusbar](GUI::Action&) {
+        statusbar.set_override_text({});
+    };
+
+    window->show();
     return app->exec();
 }
