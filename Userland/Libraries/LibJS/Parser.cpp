@@ -6,11 +6,11 @@
  */
 
 #include "Parser.h"
+#include <AK/CharacterTypes.h>
 #include <AK/HashTable.h>
 #include <AK/ScopeGuard.h>
 #include <AK/StdLibExtras.h>
 #include <AK/TemporaryChange.h>
-#include <ctype.h>
 
 namespace JS {
 
@@ -415,7 +415,9 @@ RefPtr<FunctionExpression> Parser::try_parse_arrow_function_expression(bool expe
         state_rollback_guard.disarm();
         discard_saved_state();
         auto body = function_body_result.release_nonnull();
-        return create_ast_node<FunctionExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, "", move(body), move(parameters), function_length, m_parser_state.m_var_scopes.take_last(), is_strict, true);
+        return create_ast_node<FunctionExpression>(
+            { m_parser_state.m_current_token.filename(), rule_start.position(), position() }, "", move(body),
+            move(parameters), function_length, m_parser_state.m_var_scopes.take_last(), FunctionKind::Regular, is_strict, true);
     }
 
     return nullptr;
@@ -586,13 +588,20 @@ NonnullRefPtr<ClassExpression> Parser::parse_class_expression(bool expect_class_
         if (!super_class.is_null()) {
             // Set constructor to the result of parsing the source text
             // constructor(... args){ super (...args);}
-            auto super_call = create_ast_node<CallExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, create_ast_node<SuperExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }), Vector { CallExpression::Argument { create_ast_node<Identifier>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, "args"), true } });
+            auto super_call = create_ast_node<CallExpression>(
+                { m_parser_state.m_current_token.filename(), rule_start.position(), position() },
+                create_ast_node<SuperExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }),
+                Vector { CallExpression::Argument { create_ast_node<Identifier>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, "args"), true } });
             constructor_body->append(create_ast_node<ExpressionStatement>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, move(super_call)));
             constructor_body->add_variables(m_parser_state.m_var_scopes.last());
 
-            constructor = create_ast_node<FunctionExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, class_name, move(constructor_body), Vector { FunctionNode::Parameter { FlyString { "args" }, nullptr, true } }, 0, NonnullRefPtrVector<VariableDeclaration>(), true);
+            constructor = create_ast_node<FunctionExpression>(
+                { m_parser_state.m_current_token.filename(), rule_start.position(), position() }, class_name, move(constructor_body),
+                Vector { FunctionNode::Parameter { FlyString { "args" }, nullptr, true } }, 0, NonnullRefPtrVector<VariableDeclaration>(), FunctionKind::Regular, true);
         } else {
-            constructor = create_ast_node<FunctionExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, class_name, move(constructor_body), Vector<FunctionNode::Parameter> {}, 0, NonnullRefPtrVector<VariableDeclaration>(), true);
+            constructor = create_ast_node<FunctionExpression>(
+                { m_parser_state.m_current_token.filename(), rule_start.position(), position() }, class_name, move(constructor_body),
+                Vector<FunctionNode::Parameter> {}, 0, NonnullRefPtrVector<VariableDeclaration>(), FunctionKind::Regular, true);
         }
     }
 
@@ -634,6 +643,7 @@ NonnullRefPtr<Expression> Parser::parse_primary_expression()
             syntax_error("'super' keyword unexpected here");
         return create_ast_node<SuperExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() });
     case TokenType::Identifier: {
+    read_as_identifier:;
         if (!try_parse_arrow_function_expression_failed_at_position(position())) {
             auto arrow_function_result = try_parse_arrow_function_expression(false);
             if (!arrow_function_result.is_null())
@@ -674,6 +684,10 @@ NonnullRefPtr<Expression> Parser::parse_primary_expression()
         }
         return parse_new_expression();
     }
+    case TokenType::Yield:
+        if (!m_parser_state.m_in_generator_function_context)
+            goto read_as_identifier;
+        return parse_yield_expression();
     default:
         expected("primary expression");
         consume();
@@ -769,7 +783,7 @@ NonnullRefPtr<Expression> Parser::parse_property_key()
         return create_ast_node<BigIntLiteral>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, consume().value());
     } else if (match(TokenType::BracketOpen)) {
         consume(TokenType::BracketOpen);
-        auto result = parse_expression(0);
+        auto result = parse_expression(2);
         consume(TokenType::BracketClose);
         return result;
     } else {
@@ -1256,6 +1270,16 @@ NonnullRefPtr<NewExpression> Parser::parse_new_expression()
     return create_ast_node<NewExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, move(callee), move(arguments));
 }
 
+NonnullRefPtr<YieldExpression> Parser::parse_yield_expression()
+{
+    auto rule_start = push_start();
+    consume(TokenType::Yield);
+    RefPtr<Expression> argument;
+    if (match_expression())
+        argument = parse_expression(0);
+    return create_ast_node<YieldExpression>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, move(argument));
+}
+
 NonnullRefPtr<ReturnStatement> Parser::parse_return_statement()
 {
     auto rule_start = push_start();
@@ -1336,9 +1360,14 @@ NonnullRefPtr<FunctionNodeType> Parser::parse_function_node(u8 parse_options)
 
     ScopePusher scope(*this, ScopePusher::Var | ScopePusher::Function);
 
+    auto is_generator = false;
     String name;
     if (parse_options & FunctionNodeParseOptions::CheckForFunctionAndName) {
         consume(TokenType::Function);
+        is_generator = match(TokenType::Asterisk);
+        if (is_generator)
+            consume(TokenType::Asterisk);
+
         if (FunctionNodeType::must_have_name() || match(TokenType::Identifier))
             name = consume(TokenType::Identifier).value();
     }
@@ -1351,6 +1380,7 @@ NonnullRefPtr<FunctionNodeType> Parser::parse_function_node(u8 parse_options)
         function_length = parameters.size();
 
     TemporaryChange change(m_parser_state.m_in_function_context, true);
+    TemporaryChange generator_change(m_parser_state.m_in_generator_function_context, m_parser_state.m_in_generator_function_context || is_generator);
     auto old_labels_in_scope = move(m_parser_state.m_labels_in_scope);
     ScopeGuard guard([&]() {
         m_parser_state.m_labels_in_scope = move(old_labels_in_scope);
@@ -1360,7 +1390,10 @@ NonnullRefPtr<FunctionNodeType> Parser::parse_function_node(u8 parse_options)
     auto body = parse_block_statement(is_strict);
     body->add_variables(m_parser_state.m_var_scopes.last());
     body->add_functions(m_parser_state.m_function_scopes.last());
-    return create_ast_node<FunctionNodeType>({ m_parser_state.m_current_token.filename(), rule_start.position(), position() }, name, move(body), move(parameters), function_length, NonnullRefPtrVector<VariableDeclaration>(), is_strict);
+    return create_ast_node<FunctionNodeType>(
+        { m_parser_state.m_current_token.filename(), rule_start.position(), position() },
+        name, move(body), move(parameters), function_length, NonnullRefPtrVector<VariableDeclaration>(),
+        is_generator ? FunctionKind::Generator : FunctionKind::Regular, is_strict);
 }
 
 Vector<FunctionNode::Parameter> Parser::parse_formal_parameters(int& function_length, u8 parse_options)
@@ -2009,6 +2042,7 @@ bool Parser::match_expression() const
         || type == TokenType::This
         || type == TokenType::Super
         || type == TokenType::RegexLiteral
+        || type == TokenType::Yield
         || match_unary_prefixed_expression();
 }
 
@@ -2085,6 +2119,7 @@ bool Parser::match_statement() const
     auto type = m_parser_state.m_current_token.type();
     return match_expression()
         || type == TokenType::Return
+        || type == TokenType::Yield
         || type == TokenType::Do
         || type == TokenType::If
         || type == TokenType::Throw
@@ -2178,7 +2213,7 @@ Token Parser::consume(TokenType expected_type)
 Token Parser::consume_and_validate_numeric_literal()
 {
     auto is_unprefixed_octal_number = [](const StringView& value) {
-        return value.length() > 1 && value[0] == '0' && isdigit(value[1]);
+        return value.length() > 1 && value[0] == '0' && is_ascii_digit(value[1]);
     };
     auto literal_start = position();
     auto token = consume(TokenType::NumericLiteral);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -36,15 +36,15 @@ protected:
 
 class Image : public RefCounted<Image> {
 public:
-    static RefPtr<Image> create_with_size(Gfx::IntSize const&);
-    static RefPtr<Image> create_from_file(String const& file_path);
-    static RefPtr<Image> create_from_bitmap(RefPtr<Gfx::Bitmap> bitmap);
+    static RefPtr<Image> try_create_with_size(Gfx::IntSize const&);
+    static RefPtr<Image> try_create_from_file(String const& file_path);
+    static RefPtr<Image> try_create_from_bitmap(NonnullRefPtr<Gfx::Bitmap>);
 
     size_t layer_count() const { return m_layers.size(); }
-    const Layer& layer(size_t index) const { return m_layers.at(index); }
+    Layer const& layer(size_t index) const { return m_layers.at(index); }
     Layer& layer(size_t index) { return m_layers.at(index); }
 
-    const Gfx::IntSize& size() const { return m_size; }
+    Gfx::IntSize const& size() const { return m_size; }
     Gfx::IntRect rect() const { return { {}, m_size }; }
 
     void add_layer(NonnullRefPtr<Layer>);
@@ -70,12 +70,12 @@ public:
     void layer_did_modify_bitmap(Badge<Layer>, Layer const&);
     void layer_did_modify_properties(Badge<Layer>, Layer const&);
 
-    size_t index_of(const Layer&) const;
+    size_t index_of(Layer const&) const;
 
 private:
-    explicit Image(const Gfx::IntSize&);
+    explicit Image(Gfx::IntSize const&);
 
-    static RefPtr<Image> create_from_pixel_paint_file(String const& file_path);
+    static RefPtr<Image> try_create_from_pixel_paint_file(String const& file_path);
 
     void did_change();
     void did_modify_layer_stack();

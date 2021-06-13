@@ -47,6 +47,9 @@ set(KERNEL_SOURCES
     VirtIO/VirtIO.cpp
     VirtIO/VirtIOQueue.cpp
     VirtIO/VirtIOConsole.cpp
+    Devices/USB/USBDevice.cpp
+    Devices/USB/USBPipe.cpp
+    Devices/USB/USBTransfer.cpp
     Devices/VMWareBackdoor.cpp
     Devices/ZeroDevice.cpp
     Devices/HID/I8042Controller.cpp
@@ -115,14 +118,17 @@ set(KERNEL_SOURCES
     KString.cpp
     KSyms.cpp
     Lock.cpp
+    Net/E1000ENetworkAdapter.cpp
     Net/E1000NetworkAdapter.cpp
     Net/IPv4Socket.cpp
     Net/LocalSocket.cpp
     Net/LoopbackAdapter.cpp
     Net/NE2000NetworkAdapter.cpp
     Net/NetworkAdapter.cpp
+    Net/NetworkingManagement.cpp
     Net/NetworkTask.cpp
     Net/RTL8139NetworkAdapter.cpp
+    Net/RTL8168NetworkAdapter.cpp
     Net/Routing.cpp
     Net/Socket.cpp
     Net/TCPSocket.cpp

@@ -7,13 +7,15 @@
 #include <AK/Debug.h>
 #include <AK/Function.h>
 #include <LibJS/AST.h>
-#include <LibJS/Bytecode/Block.h>
+#include <LibJS/Bytecode/BasicBlock.h>
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/GeneratorObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/ScriptFunction.h>
 #include <LibJS/Runtime/Value.h>
 
@@ -31,18 +33,19 @@ static ScriptFunction* typed_this(VM& vm, GlobalObject& global_object)
     return static_cast<ScriptFunction*>(this_object);
 }
 
-ScriptFunction* ScriptFunction::create(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, ScopeObject* parent_scope, bool is_strict, bool is_arrow_function)
+ScriptFunction* ScriptFunction::create(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, ScopeObject* parent_scope, FunctionKind kind, bool is_strict, bool is_arrow_function)
 {
-    return global_object.heap().allocate<ScriptFunction>(global_object, global_object, name, body, move(parameters), m_function_length, parent_scope, *global_object.function_prototype(), is_strict, is_arrow_function);
+    return global_object.heap().allocate<ScriptFunction>(global_object, global_object, name, body, move(parameters), m_function_length, parent_scope, *global_object.function_prototype(), kind, is_strict, is_arrow_function);
 }
 
-ScriptFunction::ScriptFunction(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, ScopeObject* parent_scope, Object& prototype, bool is_strict, bool is_arrow_function)
+ScriptFunction::ScriptFunction(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, ScopeObject* parent_scope, Object& prototype, FunctionKind kind, bool is_strict, bool is_arrow_function)
     : Function(prototype, is_arrow_function ? vm().this_value(global_object) : Value(), {})
     , m_name(name)
     , m_body(body)
     , m_parameters(move(parameters))
     , m_parent_scope(parent_scope)
     , m_function_length(m_function_length)
+    , m_kind(kind)
     , m_is_strict(is_strict)
     , m_is_arrow_function(is_arrow_function)
 {
@@ -151,16 +154,21 @@ Value ScriptFunction::execute_function_body()
 
     if (bytecode_interpreter) {
         prepare_arguments();
-        if (!m_bytecode_block) {
-            m_bytecode_block = Bytecode::Generator::generate(m_body);
-            VERIFY(m_bytecode_block);
+        if (!m_bytecode_executable.has_value()) {
+            m_bytecode_executable = Bytecode::Generator::generate(m_body, m_kind == FunctionKind::Generator);
             if constexpr (JS_BYTECODE_DEBUG) {
                 dbgln("Compiled Bytecode::Block for function '{}':", m_name);
-                m_bytecode_block->dump();
+                for (auto& block : m_bytecode_executable->basic_blocks)
+                    block.dump(*m_bytecode_executable);
             }
         }
-        return bytecode_interpreter->run(*m_bytecode_block);
+        auto result = bytecode_interpreter->run(*m_bytecode_executable);
+        if (m_kind != FunctionKind::Generator)
+            return result;
+
+        return GeneratorObject::create(global_object(), result, this, vm.call_frame().scope, bytecode_interpreter->snapshot_frame());
     } else {
+        VERIFY(m_kind != FunctionKind::Generator);
         OwnPtr<Interpreter> local_interpreter;
         ast_interpreter = vm.interpreter_if_exists();
 

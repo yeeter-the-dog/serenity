@@ -6,22 +6,23 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <AK/GenericLexer.h>
 #include <LibCore/DateTime.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/DateConstructor.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/VM.h>
-#include <ctype.h>
 #include <sys/time.h>
 #include <time.h>
 
 namespace JS {
 
+// 21.4.3.2 Date.parse ( string ), https://tc39.es/ecma262/#sec-date.parse
 static Value parse_simplified_iso8601(const String& iso_8601)
 {
     // Date.parse() is allowed to accept many formats. We strictly only accept things matching
-    // http://www.ecma-international.org/ecma-262/#sec-date-time-string-format
+    // 21.4.1.15 Date Time String Format, https://tc39.es/ecma262/#sec-date-time-string-format
     GenericLexer lexer(iso_8601);
     auto lex_n_digits = [&](size_t n, int& out) {
         if (lexer.tell_remaining() < n)
@@ -29,7 +30,7 @@ static Value parse_simplified_iso8601(const String& iso_8601)
         int r = 0;
         for (size_t i = 0; i < n; ++i) {
             char ch = lexer.consume();
-            if (!isdigit(ch))
+            if (!is_ascii_digit(ch))
                 return false;
             r = 10 * r + ch - '0';
         }
@@ -39,7 +40,7 @@ static Value parse_simplified_iso8601(const String& iso_8601)
 
     int year = -1, month = -1, day = -1;
     int hours = -1, minutes = -1, seconds = -1, milliseconds = -1;
-    char timezone = -1;
+    int timezone = -1;
     int timezone_hours = -1, timezone_minutes = -1;
     auto lex_year = [&]() {
         if (lexer.consume_specific('+'))
@@ -98,7 +99,7 @@ static Value parse_simplified_iso8601(const String& iso_8601)
     tm.tm_min = minutes == -1 ? 0 : minutes;
     tm.tm_sec = seconds == -1 ? 0 : seconds;
 
-    // http://www.ecma-international.org/ecma-262/#sec-date.parse:
+    // https://tc39.es/ecma262/#sec-date.parse:
     // "When the UTC offset representation is absent, date-only forms are interpreted as a UTC time and date-time forms are interpreted as a local time."
     time_t timestamp;
     if (timezone != -1 || hours == -1)
@@ -127,23 +128,29 @@ void DateConstructor::initialize(GlobalObject& global_object)
 {
     auto& vm = this->vm();
     NativeFunction::initialize(global_object);
+
+    // 21.4.3.3 Date.prototype, https://tc39.es/ecma262/#sec-date.prototype
     define_property(vm.names.prototype, global_object.date_prototype(), 0);
+
     define_property(vm.names.length, Value(7), Attribute::Configurable);
 
-    define_native_function(vm.names.now, now, 0, Attribute::Writable | Attribute::Configurable);
-    define_native_function(vm.names.parse, parse, 1, Attribute::Writable | Attribute::Configurable);
-    define_native_function(vm.names.UTC, utc, 1, Attribute::Writable | Attribute::Configurable);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    define_native_function(vm.names.now, now, 0, attr);
+    define_native_function(vm.names.parse, parse, 1, attr);
+    define_native_function(vm.names.UTC, utc, 1, attr);
 }
 
 DateConstructor::~DateConstructor()
 {
 }
 
+// 21.4.2.1 Date ( ...values ), https://tc39.es/ecma262/#sec-date
 Value DateConstructor::call()
 {
     return js_string(heap(), Date::now(global_object())->string());
 }
 
+// 21.4.2.1 Date ( ...values ), https://tc39.es/ecma262/#sec-date
 Value DateConstructor::construct(Function&)
 {
     auto& vm = this->vm();
@@ -255,6 +262,7 @@ Value DateConstructor::construct(Function&)
     return date;
 }
 
+// 21.4.3.1 Date.now ( ), https://tc39.es/ecma262/#sec-date.now
 JS_DEFINE_NATIVE_FUNCTION(DateConstructor::now)
 {
     struct timeval tv;
@@ -262,6 +270,7 @@ JS_DEFINE_NATIVE_FUNCTION(DateConstructor::now)
     return Value(tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0);
 }
 
+// 21.4.3.2 Date.parse ( string ), https://tc39.es/ecma262/#sec-date.parse
 JS_DEFINE_NATIVE_FUNCTION(DateConstructor::parse)
 {
     if (!vm.argument_count())
@@ -274,6 +283,7 @@ JS_DEFINE_NATIVE_FUNCTION(DateConstructor::parse)
     return parse_simplified_iso8601(iso_8601);
 }
 
+// 21.4.3.4 Date.UTC ( year [ , month [ , date [ , hours [ , minutes [ , seconds [ , ms ] ] ] ] ] ] ), https://tc39.es/ecma262/#sec-date.utc
 JS_DEFINE_NATIVE_FUNCTION(DateConstructor::utc)
 {
     auto arg_or = [&vm, &global_object](size_t i, i32 fallback) { return vm.argument_count() > i ? vm.argument(i).to_i32(global_object) : fallback; };
@@ -293,4 +303,5 @@ JS_DEFINE_NATIVE_FUNCTION(DateConstructor::utc)
     int milliseconds = arg_or(6, 0);
     return Value(1000.0 * timegm(&tm) + milliseconds);
 }
+
 }

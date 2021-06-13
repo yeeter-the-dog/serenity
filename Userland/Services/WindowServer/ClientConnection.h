@@ -97,13 +97,14 @@ private:
     virtual void add_menu_item(i32, i32, i32, String const&, bool, bool, bool, bool, String const&, Gfx::ShareableBitmap const&, bool) override;
     virtual void add_menu_separator(i32) override;
     virtual void update_menu_item(i32, i32, i32, String const&, bool, bool, bool, bool, String const&) override;
-    virtual Messages::WindowServer::CreateWindowResponse create_window(Gfx::IntRect const&, bool, bool, bool,
+    virtual void create_window(i32, Gfx::IntRect const&, bool, bool, bool,
         bool, bool, bool, bool, bool, float, float, Gfx::IntSize const&, Gfx::IntSize const&, Gfx::IntSize const&,
         Optional<Gfx::IntSize> const&, i32, String const&, i32) override;
     virtual Messages::WindowServer::DestroyWindowResponse destroy_window(i32) override;
     virtual void set_window_title(i32, String const&) override;
     virtual Messages::WindowServer::GetWindowTitleResponse get_window_title(i32) override;
     virtual Messages::WindowServer::IsMaximizedResponse is_maximized(i32) override;
+    virtual void set_maximized(i32, bool) override;
     virtual void start_window_resize(i32) override;
     virtual Messages::WindowServer::SetWindowRectResponse set_window_rect(i32, Gfx::IntRect const&) override;
     virtual Messages::WindowServer::GetWindowRectResponse get_window_rect(i32) override;
@@ -161,8 +162,6 @@ private:
     HashMap<int, NonnullRefPtr<Menu>> m_menus;
 
     RefPtr<Core::Timer> m_ping_timer;
-
-    int m_next_window_id { 1982 };
 
     bool m_has_display_link { false };
     bool m_unresponsive { false };

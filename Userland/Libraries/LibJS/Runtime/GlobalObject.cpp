@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,6 +15,8 @@
 #include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
 #include <LibJS/Parser.h>
+#include <LibJS/Runtime/AggregateErrorConstructor.h>
+#include <LibJS/Runtime/AggregateErrorPrototype.h>
 #include <LibJS/Runtime/ArrayBufferConstructor.h>
 #include <LibJS/Runtime/ArrayBufferPrototype.h>
 #include <LibJS/Runtime/ArrayConstructor.h>
@@ -34,6 +36,9 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/IteratorPrototype.h>
 #include <LibJS/Runtime/JSONObject.h>
+#include <LibJS/Runtime/MapConstructor.h>
+#include <LibJS/Runtime/MapIteratorPrototype.h>
+#include <LibJS/Runtime/MapPrototype.h>
 #include <LibJS/Runtime/MathObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/NumberConstructor.h>
@@ -47,6 +52,9 @@
 #include <LibJS/Runtime/ReflectObject.h>
 #include <LibJS/Runtime/RegExpConstructor.h>
 #include <LibJS/Runtime/RegExpPrototype.h>
+#include <LibJS/Runtime/SetConstructor.h>
+#include <LibJS/Runtime/SetIteratorPrototype.h>
+#include <LibJS/Runtime/SetPrototype.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringConstructor.h>
 #include <LibJS/Runtime/StringIteratorPrototype.h>
@@ -57,6 +65,12 @@
 #include <LibJS/Runtime/TypedArrayConstructor.h>
 #include <LibJS/Runtime/TypedArrayPrototype.h>
 #include <LibJS/Runtime/Value.h>
+#include <LibJS/Runtime/WeakMapConstructor.h>
+#include <LibJS/Runtime/WeakMapPrototype.h>
+#include <LibJS/Runtime/WeakRefConstructor.h>
+#include <LibJS/Runtime/WeakRefPrototype.h>
+#include <LibJS/Runtime/WeakSetConstructor.h>
+#include <LibJS/Runtime/WeakSetPrototype.h>
 
 namespace JS {
 
@@ -87,7 +101,10 @@ void GlobalObject::initialize_global_object()
     static_cast<FunctionPrototype*>(m_function_prototype)->initialize(*this);
     static_cast<ObjectPrototype*>(m_object_prototype)->initialize(*this);
 
-    set_prototype(m_object_prototype);
+    Object::set_prototype(m_object_prototype);
+
+    // This must be initialized before allocating AggregateErrorPrototype, which uses ErrorPrototype as its prototype.
+    m_error_prototype = heap().allocate<ErrorPrototype>(*this, *this);
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     if (!m_##snake_name##_prototype)                                                     \
@@ -125,6 +142,10 @@ void GlobalObject::initialize_global_object()
     define_property(vm.names.JSON, heap().allocate<JSONObject>(*this, *this), attr);
     define_property(vm.names.Reflect, heap().allocate<ReflectObject>(*this, *this), attr);
 
+    // This must be initialized before allocating AggregateErrorConstructor, which uses ErrorConstructor as its prototype.
+    initialize_constructor(vm.names.Error, m_error_constructor, m_error_prototype);
+
+    add_constructor(vm.names.AggregateError, m_aggregate_error_constructor, m_aggregate_error_prototype);
     add_constructor(vm.names.Array, m_array_constructor, m_array_prototype);
     add_constructor(vm.names.ArrayBuffer, m_array_buffer_constructor, m_array_buffer_prototype);
     add_constructor(vm.names.BigInt, m_bigint_constructor, m_bigint_prototype);
@@ -132,19 +153,24 @@ void GlobalObject::initialize_global_object()
     add_constructor(vm.names.Date, m_date_constructor, m_date_prototype);
     add_constructor(vm.names.Error, m_error_constructor, m_error_prototype);
     add_constructor(vm.names.Function, m_function_constructor, m_function_prototype);
+    add_constructor(vm.names.Map, m_map_constructor, m_map_prototype);
     add_constructor(vm.names.Number, m_number_constructor, m_number_prototype);
     add_constructor(vm.names.Object, m_object_constructor, m_object_prototype);
     add_constructor(vm.names.Promise, m_promise_constructor, m_promise_prototype);
     add_constructor(vm.names.Proxy, m_proxy_constructor, nullptr);
     add_constructor(vm.names.RegExp, m_regexp_constructor, m_regexp_prototype);
+    add_constructor(vm.names.Set, m_set_constructor, m_set_prototype);
     add_constructor(vm.names.String, m_string_constructor, m_string_prototype);
     add_constructor(vm.names.Symbol, m_symbol_constructor, m_symbol_prototype);
+    add_constructor(vm.names.WeakMap, m_weak_map_constructor, m_weak_map_prototype);
+    add_constructor(vm.names.WeakRef, m_weak_ref_constructor, m_weak_ref_prototype);
+    add_constructor(vm.names.WeakSet, m_weak_set_constructor, m_weak_set_prototype);
 
     initialize_constructor(vm.names.TypedArray, m_typed_array_constructor, m_typed_array_prototype);
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     add_constructor(vm.names.ClassName, m_##snake_name##_constructor, m_##snake_name##_prototype);
-    JS_ENUMERATE_ERROR_SUBCLASSES
+    JS_ENUMERATE_NATIVE_ERRORS
     JS_ENUMERATE_TYPED_ARRAYS
 #undef __JS_ENUMERATE
 }
@@ -165,7 +191,7 @@ void GlobalObject::visit_edges(Visitor& visitor)
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     visitor.visit(m_##snake_name##_constructor);                                         \
     visitor.visit(m_##snake_name##_prototype);
-    JS_ENUMERATE_ERROR_SUBCLASSES
+    JS_ENUMERATE_NATIVE_ERRORS
     JS_ENUMERATE_BUILTIN_TYPES
 #undef __JS_ENUMERATE
 
@@ -177,11 +203,14 @@ void GlobalObject::visit_edges(Visitor& visitor)
 
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::gc)
 {
+#ifdef __serenity__
     dbgln("Forced garbage collection requested!");
+#endif
     vm.heap().collect_garbage();
     return js_undefined();
 }
 
+// 19.2.3 isNaN ( number ), https://tc39.es/ecma262/#sec-isnan-number
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::is_nan)
 {
     auto number = vm.argument(0).to_number(global_object);
@@ -190,6 +219,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::is_nan)
     return Value(number.is_nan());
 }
 
+// 19.2.2 isFinite ( number ), https://tc39.es/ecma262/#sec-isfinite-number
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::is_finite)
 {
     auto number = vm.argument(0).to_number(global_object);
@@ -198,6 +228,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::is_finite)
     return Value(number.is_finite_number());
 }
 
+// 19.2.4 parseFloat ( string ), https://tc39.es/ecma262/#sec-parsefloat-string
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_float)
 {
     if (vm.argument(0).is_number())
@@ -215,9 +246,9 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_float)
     return js_nan();
 }
 
+// 19.2.5 parseInt ( string, radix ), https://tc39.es/ecma262/#sec-parseint-string-radix
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_int)
 {
-    // 18.2.5 parseInt ( string, radix )
     auto input_string = vm.argument(0).to_string(global_object);
     if (vm.exception())
         return {};
@@ -305,6 +336,7 @@ Value GlobalObject::get_this_binding(GlobalObject&) const
     return Value(this);
 }
 
+// 19.2.1 eval ( x ), https://tc39.es/ecma262/#sec-eval-x
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::eval)
 {
     if (!vm.argument(0).is_string())
@@ -326,7 +358,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::eval)
     return interpreter.execute_statement(global_object, program).value_or(js_undefined());
 }
 
-// 19.2.6.1.1 Encode ( string, unescapedSet )
+// 19.2.6.1.1 Encode ( string, unescapedSet ), https://tc39.es/ecma262/#sec-encode
 static String encode([[maybe_unused]] JS::GlobalObject& global_object, const String& string, StringView unescaped_set)
 {
     StringBuilder encoded_builder;
@@ -341,7 +373,7 @@ static String encode([[maybe_unused]] JS::GlobalObject& global_object, const Str
     return encoded_builder.build();
 }
 
-// 19.2.6.1.2 Decode ( string, reservedSet )
+// 19.2.6.1.2 Decode ( string, reservedSet ), https://tc39.es/ecma262/#sec-decode
 static String decode(JS::GlobalObject& global_object, const String& string, StringView reserved_set)
 {
     StringBuilder decoded_builder;
@@ -395,6 +427,7 @@ static String decode(JS::GlobalObject& global_object, const String& string, Stri
     return decoded_builder.build();
 }
 
+// 19.2.6.4 encodeURI ( uri ), https://tc39.es/ecma262/#sec-encodeuri-uri
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri)
 {
     auto uri_string = vm.argument(0).to_string(global_object);
@@ -406,6 +439,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri)
     return js_string(vm, move(encoded));
 }
 
+// 19.2.6.2 decodeURI ( encodedURI ), https://tc39.es/ecma262/#sec-decodeuri-encodeduri
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri)
 {
     auto uri_string = vm.argument(0).to_string(global_object);
@@ -417,6 +451,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri)
     return js_string(vm, move(decoded));
 }
 
+// 19.2.6.5 encodeURIComponent ( uriComponent ), https://tc39.es/ecma262/#sec-encodeuricomponent-uricomponent
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri_component)
 {
     auto uri_string = vm.argument(0).to_string(global_object);
@@ -428,6 +463,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::encode_uri_component)
     return js_string(vm, move(encoded));
 }
 
+// 19.2.6.3 decodeURIComponent ( encodedURIComponent ), https://tc39.es/ecma262/#sec-decodeuricomponent-encodeduricomponent
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri_component)
 {
     auto uri_string = vm.argument(0).to_string(global_object);
@@ -439,6 +475,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::decode_uri_component)
     return js_string(vm, move(decoded));
 }
 
+// B.2.1.1 escape ( string ), https://tc39.es/ecma262/#sec-escape-string
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::escape)
 {
     auto string = vm.argument(0).to_string(global_object);
@@ -458,6 +495,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::escape)
     return js_string(vm, escaped.build());
 }
 
+// B.2.1.2 unescape ( string ), https://tc39.es/ecma262/#sec-unescape-string
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::unescape)
 {
     auto string = vm.argument(0).to_string(global_object);

@@ -102,9 +102,7 @@ FAQ: [Frequently Asked Questions](https://github.com/SerenityOS/serenity/blob/ma
 
 ## Get in touch
 
-IRC: `#serenityos` on the Freenode IRC network.
-
-Discord: [SerenityOS Discord](https://discord.com/invite/29gCcKsXkF)
+Join our Discord server: [SerenityOS Discord](https://discord.com/invite/29gCcKsXkF)
 
 ## Author
 
@@ -136,6 +134,7 @@ Discord: [SerenityOS Discord](https://discord.com/invite/29gCcKsXkF)
 * **Tim Flynn** - [trflynn89](https://github.com/trflynn89)
 * **Jean-Baptiste Boric** - [boricj](https://github.com/boricj)
 * **Stephan Unverwerth** - [sunverwerth](https://github.com/sunverwerth)
+* **Max Wipfli** - [MaxWipfli](https://github.com/MaxWipfli)
 
 (And many more!) The people listed above have landed more than 100 commits in the project. :^)
 

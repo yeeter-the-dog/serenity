@@ -28,18 +28,20 @@
     O(TypedInequals)              \
     O(TypedEquals)                \
     O(NewBigInt)                  \
+    O(NewArray)                   \
     O(NewString)                  \
     O(NewObject)                  \
     O(GetVariable)                \
     O(SetVariable)                \
     O(PutById)                    \
     O(GetById)                    \
+    O(PutByValue)                 \
+    O(GetByValue)                 \
     O(Jump)                       \
-    O(JumpIfFalse)                \
-    O(JumpIfTrue)                 \
-    O(JumpIfNotNullish)           \
+    O(JumpConditional)            \
+    O(JumpNullish)                \
     O(Call)                       \
-    O(EnterScope)                 \
+    O(NewFunction)                \
     O(Return)                     \
     O(BitwiseAnd)                 \
     O(BitwiseOr)                  \
@@ -54,12 +56,22 @@
     O(UnsignedRightShift)         \
     O(In)                         \
     O(InstanceOf)                 \
-    O(ConcatString)
+    O(ConcatString)               \
+    O(Increment)                  \
+    O(Decrement)                  \
+    O(Throw)                      \
+    O(PushLexicalEnvironment)     \
+    O(EnterUnwindContext)         \
+    O(LeaveUnwindContext)         \
+    O(ContinuePendingUnwind)      \
+    O(Yield)
 
 namespace JS::Bytecode {
 
 class Instruction {
 public:
+    constexpr static bool IsTerminator = false;
+
     enum class Type {
 #define __BYTECODE_OP(op) \
     op,
@@ -69,7 +81,7 @@ public:
 
     Type type() const { return m_type; }
     size_t length() const;
-    String to_string() const;
+    String to_string(Bytecode::Executable const&) const;
     void execute(Bytecode::Interpreter&) const;
     static void destroy(Instruction&);
 

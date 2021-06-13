@@ -14,7 +14,7 @@
 #include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
 #include <LibJS/AST.h>
-#include <LibJS/Bytecode/Block.h>
+#include <LibJS/Bytecode/BasicBlock.h>
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Console.h>
@@ -27,6 +27,7 @@
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/Function.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/Map.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/NumberObject.h>
 #include <LibJS/Runtime/Object.h>
@@ -35,6 +36,7 @@
 #include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/ScriptFunction.h>
+#include <LibJS/Runtime/Set.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/TypedArray.h>
@@ -278,6 +280,40 @@ static void print_proxy_object(const JS::Object& object, HashTable<JS::Object*>&
     print_value(&proxy_object.handler(), seen_objects);
 }
 
+static void print_map(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
+{
+    auto& map = static_cast<const JS::Map&>(object);
+    auto& entries = map.entries();
+    print_type("Map");
+    out(" {{");
+    bool first = true;
+    for (auto& entry : entries) {
+        print_separator(first);
+        print_value(entry.key, seen_objects);
+        out(" => ");
+        print_value(entry.value, seen_objects);
+    }
+    if (!first)
+        out(" ");
+    out("}}");
+}
+
+static void print_set(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
+{
+    auto& set = static_cast<const JS::Set&>(object);
+    auto& values = set.values();
+    print_type("Set");
+    out(" {{");
+    bool first = true;
+    for (auto& value : values) {
+        print_separator(first);
+        print_value(value, seen_objects);
+    }
+    if (!first)
+        out(" ");
+    out("}}");
+}
+
 static void print_promise(const JS::Object& object, HashTable<JS::Object*>& seen_objects)
 {
     auto& promise = static_cast<const JS::Promise&>(object);
@@ -399,6 +435,10 @@ static void print_value(JS::Value value, HashTable<JS::Object*>& seen_objects)
             return print_error(object, seen_objects);
         if (is<JS::RegExpObject>(object))
             return print_regexp_object(object, seen_objects);
+        if (is<JS::Map>(object))
+            return print_map(object, seen_objects);
+        if (is<JS::Set>(object))
+            return print_set(object, seen_objects);
         if (is<JS::ProxyObject>(object))
             return print_proxy_object(object, seen_objects);
         if (is<JS::Promise>(object))
@@ -494,21 +534,6 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
     if (s_dump_ast)
         program->dump(0);
 
-    if (s_dump_bytecode || s_run_bytecode) {
-        auto block = JS::Bytecode::Generator::generate(*program);
-        VERIFY(block);
-
-        if (s_dump_bytecode)
-            block->dump();
-
-        if (s_run_bytecode) {
-            JS::Bytecode::Interpreter bytecode_interpreter(interpreter.global_object());
-            bytecode_interpreter.run(*block);
-        }
-
-        return true;
-    }
-
     if (parser.has_errors()) {
         auto error = parser.errors()[0];
         auto hint = error.source_location_hint(source);
@@ -516,7 +541,26 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
             outln("{}", hint);
         vm->throw_exception<JS::SyntaxError>(interpreter.global_object(), error.to_string());
     } else {
-        interpreter.run(interpreter.global_object(), *program);
+        if (s_dump_bytecode || s_run_bytecode) {
+            auto unit = JS::Bytecode::Generator::generate(*program);
+            if (s_dump_bytecode) {
+                for (auto& block : unit.basic_blocks)
+                    block.dump(unit);
+                if (!unit.string_table->is_empty()) {
+                    outln();
+                    unit.string_table->dump();
+                }
+            }
+
+            if (s_run_bytecode) {
+                JS::Bytecode::Interpreter bytecode_interpreter(interpreter.global_object());
+                bytecode_interpreter.run(unit);
+            } else {
+                return true;
+            }
+        } else {
+            interpreter.run(interpreter.global_object(), *program);
+        }
     }
 
     auto handle_exception = [&] {
@@ -960,7 +1004,7 @@ int main(int argc, char** argv)
                     if (key.view().starts_with(property_pattern)) {
                         Line::CompletionSuggestion completion { key, Line::CompletionSuggestion::ForSearch };
                         if (!results.contains_slow(completion)) { // hide duplicates
-                            results.append(key);
+                            results.append(String(key));
                         }
                     }
                 }

@@ -31,18 +31,28 @@ Value ErrorConstructor::call()
 Value ErrorConstructor::construct(Function&)
 {
     auto& vm = this->vm();
-    String message;
+    // FIXME: Use OrdinaryCreateFromConstructor(newTarget, "%Error.prototype%")
+    auto* error = Error::create(global_object());
+
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+
     if (!vm.argument(0).is_undefined()) {
-        message = vm.argument(0).to_string(global_object());
+        auto message = vm.argument(0).to_string(global_object());
         if (vm.exception())
             return {};
+        error->define_property(vm.names.message, js_string(vm, message), attr);
     }
-    return Error::create(global_object(), message);
+
+    error->install_error_cause(vm.argument(1));
+    if (vm.exception())
+        return {};
+
+    return error;
 }
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     ConstructorName::ConstructorName(GlobalObject& global_object)                        \
-        : NativeFunction(*global_object.function_prototype())                            \
+        : NativeFunction(*static_cast<Object*>(global_object.error_constructor()))       \
     {                                                                                    \
     }                                                                                    \
                                                                                          \
@@ -64,16 +74,27 @@ Value ErrorConstructor::construct(Function&)
     Value ConstructorName::construct(Function&)                                          \
     {                                                                                    \
         auto& vm = this->vm();                                                           \
-        String message = "";                                                             \
+        /* FIXME: Use OrdinaryCreateFromConstructor(                                     \
+         * FIXME:     newTarget, "%NativeError.prototype%"). */                          \
+        auto* error = ClassName::create(global_object());                                \
+                                                                                         \
+        u8 attr = Attribute::Writable | Attribute::Configurable;                         \
+                                                                                         \
         if (!vm.argument(0).is_undefined()) {                                            \
-            message = vm.argument(0).to_string(global_object());                         \
+            auto message = vm.argument(0).to_string(global_object());                    \
             if (vm.exception())                                                          \
                 return {};                                                               \
+            error->define_property(vm.names.message, js_string(vm, message), attr);      \
         }                                                                                \
-        return ClassName::create(global_object(), message);                              \
+                                                                                         \
+        error->install_error_cause(vm.argument(1));                                      \
+        if (vm.exception())                                                              \
+            return {};                                                                   \
+                                                                                         \
+        return error;                                                                    \
     }
 
-JS_ENUMERATE_ERROR_SUBCLASSES
+JS_ENUMERATE_NATIVE_ERRORS
 #undef __JS_ENUMERATE
 
 }

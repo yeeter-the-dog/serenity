@@ -43,7 +43,7 @@ void Interpreter::run(GlobalObject& global_object, const Program& program)
 
     VM::InterpreterExecutionScope scope(*this);
 
-    vm.set_last_value({}, {});
+    vm.set_last_value(Badge<Interpreter> {}, {});
 
     CallFrame global_call_frame;
     global_call_frame.current_node = &program;
@@ -56,13 +56,15 @@ void Interpreter::run(GlobalObject& global_object, const Program& program)
     vm.push_call_frame(global_call_frame, global_object);
     VERIFY(!vm.exception());
     auto value = program.execute(*this, global_object);
-    vm.set_last_value({}, value.value_or(js_undefined()));
+    vm.set_last_value(Badge<Interpreter> {}, value.value_or(js_undefined()));
 
     vm.pop_call_frame();
 
     // At this point we may have already run any queued promise jobs via on_call_stack_emptied,
     // in which case this is a no-op.
     vm.run_queued_promise_jobs();
+
+    vm.finish_execution_generation();
 }
 
 GlobalObject& Interpreter::global_object()
@@ -79,7 +81,7 @@ void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type,
 {
     ScopeGuard guard([&] {
         for (auto& declaration : scope_node.functions()) {
-            auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.is_strict_mode());
+            auto* function = ScriptFunction::create(global_object, declaration.name(), declaration.body(), declaration.parameters(), declaration.function_length(), current_scope(), declaration.kind(), declaration.is_strict_mode());
             vm().set_variable(declaration.name(), function, global_object);
         }
     });
@@ -94,9 +96,11 @@ void Interpreter::enter_scope(const ScopeNode& scope_node, ScopeType scope_type,
     HashMap<FlyString, Variable> scope_variables_with_declaration_kind;
     scope_variables_with_declaration_kind.ensure_capacity(16);
 
+    bool is_program_node = is<Program>(scope_node);
+
     for (auto& declaration : scope_node.variables()) {
         for (auto& declarator : declaration.declarations()) {
-            if (is<Program>(scope_node)) {
+            if (is_program_node && declaration.declaration_kind() == DeclarationKind::Var) {
                 declarator.target().visit(
                     [&](const NonnullRefPtr<Identifier>& id) {
                         global_object.put(id->string(), js_undefined());

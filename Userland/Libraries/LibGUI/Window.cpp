@@ -6,6 +6,7 @@
 
 #include <AK/Debug.h>
 #include <AK/HashMap.h>
+#include <AK/IDAllocator.h>
 #include <AK/JsonObject.h>
 #include <AK/NeverDestroyed.h>
 #include <AK/ScopeGuard.h>
@@ -30,6 +31,7 @@
 namespace GUI {
 
 static i32 s_next_backing_store_serial;
+static IDAllocator s_window_id_allocator;
 
 class WindowBackingStore {
 public:
@@ -118,7 +120,10 @@ void Window::show()
 
     auto* parent_window = find_parent_window();
 
-    m_window_id = WindowServerConnection::the().create_window(
+    m_window_id = s_window_id_allocator.allocate();
+
+    WindowServerConnection::the().async_create_window(
+        m_window_id,
         m_rect_when_windowless,
         !m_moved_by_client,
         m_has_alpha_channel,
@@ -375,7 +380,7 @@ void Window::handle_multi_paint_event(MultiPaintEvent& event)
         // It's possible that there had been some calls to update() that
         // haven't been flushed. We can handle these right now, avoiding
         // another round trip.
-        rects.append(move(m_pending_paint_event_rects));
+        rects.extend(move(m_pending_paint_event_rects));
     }
     VERIFY(!rects.is_empty());
     if (m_back_store && m_back_store->size() != event.window_size()) {
@@ -913,6 +918,11 @@ bool Window::is_maximized() const
         return false;
 
     return WindowServerConnection::the().is_maximized(m_window_id);
+}
+
+void Window::set_maximized(bool maximized)
+{
+    WindowServerConnection::the().async_set_maximized(m_window_id, maximized);
 }
 
 void Window::schedule_relayout()

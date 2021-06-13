@@ -2402,7 +2402,6 @@ void copy_ptrace_registers_into_kernel_registers(RegisterState& kernel_regs, con
 }
 }
 
-#ifdef DEBUG
 void __assertion_failed(const char* msg, const char* file, unsigned line, const char* func)
 {
     asm volatile("cli");
@@ -2411,11 +2410,9 @@ void __assertion_failed(const char* msg, const char* file, unsigned line, const 
 
     abort();
 }
-#endif
 
 [[noreturn]] void abort()
 {
-#ifdef DEBUG
     // Switch back to the current process's page tables if there are any.
     // Otherwise stack walking will be a disaster.
     auto process = Process::current();
@@ -2424,7 +2421,6 @@ void __assertion_failed(const char* msg, const char* file, unsigned line, const 
 
     Kernel::dump_backtrace();
     Processor::halt();
-#endif
 
     abort();
 }

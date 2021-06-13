@@ -331,7 +331,7 @@ void VM::assign(const NonnullRefPtr<BindingPattern>& target, Value value, Global
 Value VM::get_variable(const FlyString& name, GlobalObject& global_object)
 {
     if (!m_call_stack.is_empty()) {
-        if (name == names.arguments && !call_frame().callee.is_empty()) {
+        if (name == names.arguments.as_string() && !call_frame().callee.is_empty()) {
             // HACK: Special handling for the name "arguments":
             //       If the name "arguments" is defined in the current scope, for example via
             //       a function parameter, or by a local var declaration, we use that.
@@ -378,15 +378,16 @@ Reference VM::get_reference(const FlyString& name)
     return { Reference::GlobalVariable, name };
 }
 
-Value VM::construct(Function& function, Function& new_target, Optional<MarkedValueList> arguments, GlobalObject& global_object)
+Value VM::construct(Function& function, Function& new_target, Optional<MarkedValueList> arguments)
 {
+    auto& global_object = function.global_object();
     CallFrame call_frame;
     call_frame.callee = &function;
     if (auto* interpreter = interpreter_if_exists())
         call_frame.current_node = interpreter->current_node();
     call_frame.is_strict_mode = function.is_strict_mode();
 
-    push_call_frame(call_frame, function.global_object());
+    push_call_frame(call_frame, global_object);
     if (exception())
         return {};
     ArmedScopeGuard call_frame_popper = [&] {
@@ -396,15 +397,17 @@ Value VM::construct(Function& function, Function& new_target, Optional<MarkedVal
     call_frame.function_name = function.name();
     call_frame.arguments = function.bound_arguments();
     if (arguments.has_value())
-        call_frame.arguments.append(arguments.value().values());
+        call_frame.arguments.extend(arguments.value().values());
     auto* environment = function.create_environment();
     call_frame.scope = environment;
-    environment->set_new_target(&new_target);
+    if (environment)
+        environment->set_new_target(&new_target);
 
     Object* new_object = nullptr;
     if (function.constructor_kind() == Function::ConstructorKind::Base) {
         new_object = Object::create_empty(global_object);
-        environment->bind_this_value(global_object, new_object);
+        if (environment)
+            environment->bind_this_value(global_object, new_object);
         if (exception())
             return {};
         auto prototype = new_target.get(names.prototype);
@@ -422,15 +425,18 @@ Value VM::construct(Function& function, Function& new_target, Optional<MarkedVal
     call_frame.this_value = this_value;
     auto result = function.construct(new_target);
 
-    this_value = call_frame.scope->get_this_binding(global_object);
+    if (environment)
+        this_value = environment->get_this_binding(global_object);
     pop_call_frame();
     call_frame_popper.disarm();
 
     // If we are constructing an instance of a derived class,
     // set the prototype on objects created by constructors that return an object (i.e. NativeFunction subclasses).
     if (function.constructor_kind() == Function::ConstructorKind::Base && new_target.constructor_kind() == Function::ConstructorKind::Derived && result.is_object()) {
-        VERIFY(is<LexicalEnvironment>(current_scope()));
-        static_cast<LexicalEnvironment*>(current_scope())->replace_this_binding(result);
+        if (environment) {
+            VERIFY(is<LexicalEnvironment>(current_scope()));
+            static_cast<LexicalEnvironment*>(current_scope())->replace_this_binding(result);
+        }
         auto prototype = new_target.get(names.prototype);
         if (exception())
             return {};
@@ -503,12 +509,15 @@ Value VM::call_internal(Function& function, Value this_value, Optional<MarkedVal
     call_frame.this_value = function.bound_this().value_or(this_value);
     call_frame.arguments = function.bound_arguments();
     if (arguments.has_value())
-        call_frame.arguments.append(arguments.value().values());
+        call_frame.arguments.extend(arguments.value().values());
     auto* environment = function.create_environment();
     call_frame.scope = environment;
 
-    VERIFY(environment->this_binding_status() == LexicalEnvironment::ThisBindingStatus::Uninitialized);
-    environment->bind_this_value(function.global_object(), call_frame.this_value);
+    if (environment) {
+        VERIFY(environment->this_binding_status() == LexicalEnvironment::ThisBindingStatus::Uninitialized);
+        environment->bind_this_value(function.global_object(), call_frame.this_value);
+    }
+
     if (exception())
         return {};
 
@@ -542,13 +551,13 @@ void VM::run_queued_promise_jobs()
     VERIFY(!m_exception);
 }
 
-// 9.4.4 HostEnqueuePromiseJob, https://tc39.es/ecma262/#sec-hostenqueuepromisejob
+// 9.5.4 HostEnqueuePromiseJob ( job, realm ), https://tc39.es/ecma262/#sec-hostenqueuepromisejob
 void VM::enqueue_promise_job(NativeFunction& job)
 {
     m_promise_jobs.append(&job);
 }
 
-// 27.2.1.9 HostPromiseRejectionTracker, https://tc39.es/ecma262/#sec-host-promise-rejection-tracker
+// 27.2.1.9 HostPromiseRejectionTracker ( promise, operation ), https://tc39.es/ecma262/#sec-host-promise-rejection-tracker
 void VM::promise_rejection_tracker(const Promise& promise, Promise::RejectionOperation operation) const
 {
     switch (operation) {

@@ -332,6 +332,16 @@ Messages::WindowServer::IsMaximizedResponse ClientConnection::is_maximized(i32 w
     return it->value->is_maximized();
 }
 
+void ClientConnection::set_maximized(i32 window_id, bool maximized)
+{
+    auto it = m_windows.find(window_id);
+    if (it == m_windows.end()) {
+        did_misbehave("SetMaximized: Bad window ID");
+        return;
+    }
+    it->value->set_maximized(maximized);
+}
+
 void ClientConnection::set_window_icon_bitmap(i32 window_id, Gfx::ShareableBitmap const& icon)
 {
     auto it = m_windows.find(window_id);
@@ -450,7 +460,7 @@ Window* ClientConnection::window_from_id(i32 window_id)
     return it->value.ptr();
 }
 
-Messages::WindowServer::CreateWindowResponse ClientConnection::create_window(Gfx::IntRect const& rect,
+void ClientConnection::create_window(i32 window_id, Gfx::IntRect const& rect,
     bool auto_position, bool has_alpha_channel, bool modal, bool minimizable, bool resizable,
     bool fullscreen, bool frameless, bool accessory, float opacity, float alpha_hit_threshold,
     Gfx::IntSize const& base_size, Gfx::IntSize const& size_increment, Gfx::IntSize const& minimum_size,
@@ -461,16 +471,20 @@ Messages::WindowServer::CreateWindowResponse ClientConnection::create_window(Gfx
         parent_window = window_from_id(parent_window_id);
         if (!parent_window) {
             did_misbehave("CreateWindow with bad parent_window_id");
-            return nullptr;
+            return;
         }
     }
 
     if (type < 0 || type >= (i32)WindowType::_Count) {
         did_misbehave("CreateWindow with a bad type");
-        return nullptr;
+        return;
     }
 
-    int window_id = m_next_window_id++;
+    if (m_windows.contains(window_id)) {
+        did_misbehave("CreateWindow with already-used window ID");
+        return;
+    }
+
     auto window = Window::construct(*this, (WindowType)type, window_id, modal, minimizable, frameless, resizable, fullscreen, accessory, parent_window);
 
     window->set_has_alpha_channel(has_alpha_channel);
@@ -503,7 +517,6 @@ Messages::WindowServer::CreateWindowResponse ClientConnection::create_window(Gfx
     if (window->type() == WindowType::Applet)
         AppletManager::the().add_applet(*window);
     m_windows.set(window_id, move(window));
-    return window_id;
 }
 
 void ClientConnection::destroy_window(Window& window, Vector<i32>& destroyed_window_ids)
