@@ -41,10 +41,25 @@ public:
         return UnsignedBigInteger(ptr, length);
     }
 
+    static UnsignedBigInteger create_from(u64 value)
+    {
+        VERIFY(sizeof(Word) == 4);
+        UnsignedBigInteger integer;
+        integer.m_words.resize(2);
+        integer.m_words[0] = static_cast<Word>(value & 0xFFFFFFFF);
+        integer.m_words[1] = static_cast<Word>((value >> 32) & 0xFFFFFFFF);
+        return integer;
+    }
+
     size_t export_data(Bytes, bool remove_leading_zeros = false) const;
 
+    static UnsignedBigInteger from_base2(const String& str);
+    static UnsignedBigInteger from_base8(const String& str);
     static UnsignedBigInteger from_base10(const String& str);
     String to_base10() const;
+    static UnsignedBigInteger from_base16(const String& str);
+
+    u64 to_u64() const;
 
     const Vector<Word, STARTING_WORD_SIZE>& words() const { return m_words; }
 

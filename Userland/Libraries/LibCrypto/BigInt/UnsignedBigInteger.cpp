@@ -5,6 +5,7 @@
  */
 
 #include "UnsignedBigInteger.h"
+#include <AK/CharacterTypes.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringHash.h>
 #include <LibCrypto/BigInt/Algorithms/UnsignedBigIntegerAlgorithms.h>
@@ -71,7 +72,40 @@ UnsignedBigInteger UnsignedBigInteger::from_base10(const String& str)
     UnsignedBigInteger ten { 10 };
 
     for (auto& c : str) {
-        result = result.multiplied_by(ten).plus(c - '0');
+        result = result.multiplied_by(ten).plus(parse_ascii_digit(c));
+    }
+    return result;
+}
+
+UnsignedBigInteger UnsignedBigInteger::from_base2(const String& str)
+{
+    UnsignedBigInteger result;
+    UnsignedBigInteger two { 2 };
+
+    for (auto& c : str) {
+        result = result.multiplied_by(two).plus(parse_ascii_digit(c));
+    }
+    return result;
+}
+
+UnsignedBigInteger UnsignedBigInteger::from_base8(const String& str)
+{
+    UnsignedBigInteger result;
+    UnsignedBigInteger eight { 8 };
+
+    for (auto& c : str) {
+        result = result.multiplied_by(eight).plus(parse_ascii_digit(c));
+    }
+    return result;
+}
+
+UnsignedBigInteger UnsignedBigInteger::from_base16(const String& str)
+{
+    UnsignedBigInteger result;
+    UnsignedBigInteger sixteen { 16 };
+
+    for (auto& c : str) {
+        result = result.multiplied_by(sixteen).plus(parse_ascii_hex_digit(c));
     }
     return result;
 }
@@ -100,6 +134,17 @@ String UnsignedBigInteger::to_base10() const
     }
 
     return builder.to_string();
+}
+
+u64 UnsignedBigInteger::to_u64() const
+{
+    VERIFY(sizeof(Word) == 4);
+    if (!length())
+        return 0;
+    u64 value = m_words[0];
+    if (length() > 1)
+        value |= static_cast<u64>(m_words[1]) << 32;
+    return value;
 }
 
 void UnsignedBigInteger::set_to_0()
