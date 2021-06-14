@@ -160,6 +160,21 @@ int main(int argc, char** argv)
     }));
 
     auto& edit_menu = menubar->add_menu("&Edit");
+
+    auto copy_action = GUI::CommonActions::make_copy_action([&](auto&) {
+        VERIFY(image_editor.image());
+        if (!image_editor.active_layer()) {
+            dbgln("Cannot copy with no active layer selected");
+            return;
+        }
+        auto bitmap = image_editor.active_layer()->try_copy_bitmap(image_editor.selection());
+        if (!bitmap) {
+            dbgln("try_copy() from Layer failed");
+            return;
+        }
+        GUI::Clipboard::the().set_bitmap(*bitmap);
+    });
+
     auto paste_action = GUI::CommonActions::make_paste_action([&](auto&) {
         VERIFY(image_editor.image());
         auto bitmap = GUI::Clipboard::the().bitmap();
@@ -168,13 +183,16 @@ int main(int argc, char** argv)
 
         auto layer = PixelPaint::Layer::try_create_with_bitmap(*image_editor.image(), *bitmap, "Pasted layer");
         VERIFY(layer);
-        image_editor.image()->add_layer(layer.release_nonnull());
+        image_editor.image()->add_layer(*layer);
+        image_editor.set_active_layer(layer);
+        image_editor.selection().clear();
     });
     GUI::Clipboard::the().on_change = [&](auto& mime_type) {
         paste_action->set_enabled(mime_type == "image/x-serenityos");
     };
     paste_action->set_enabled(GUI::Clipboard::the().mime_type() == "image/x-serenityos");
 
+    edit_menu.add_action(copy_action);
     edit_menu.add_action(paste_action);
 
     auto undo_action = GUI::CommonActions::make_undo_action([&](auto&) {
@@ -375,6 +393,7 @@ int main(int argc, char** argv)
     toolbar.add_action(open_image_action);
     toolbar.add_action(save_image_as_action);
     toolbar.add_separator();
+    toolbar.add_action(copy_action);
     toolbar.add_action(paste_action);
     toolbar.add_action(undo_action);
     toolbar.add_action(redo_action);

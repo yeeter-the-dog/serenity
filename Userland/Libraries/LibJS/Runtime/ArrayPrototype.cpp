@@ -2,6 +2,7 @@
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2020, Marcin Gasperowicz <xnooga@gmail.com>
+ * Copyright (c) 2021, David Tuin <david.tuin@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -61,14 +62,33 @@ void ArrayPrototype::initialize(GlobalObject& global_object)
     define_native_function(vm.names.fill, fill, 1, attr);
     define_native_function(vm.names.values, values, 0, attr);
     define_native_function(vm.names.flat, flat, 0, attr);
+    define_native_function(vm.names.flatMap, flat_map, 1, attr);
     define_native_function(vm.names.at, at, 1, attr);
     define_native_function(vm.names.keys, keys, 0, attr);
+    define_native_function(vm.names.entries, entries, 0, attr);
+    define_native_function(vm.names.copyWithin, copy_within, 2, attr);
 
     // Use define_property here instead of define_native_function so that
     // Object.is(Array.prototype[Symbol.iterator], Array.prototype.values)
     // evaluates to true
     // 23.1.3.33 Array.prototype [ @@iterator ] ( ), https://tc39.es/ecma262/#sec-array.prototype-@@iterator
     define_property(vm.well_known_symbol_iterator(), get(vm.names.values), attr);
+
+    // 23.1.3.34 Array.prototype [ @@unscopables ], https://tc39.es/ecma262/#sec-array.prototype-@@unscopables
+    Object* unscopable_list = create_empty(global_object);
+    unscopable_list->set_prototype(nullptr);
+    unscopable_list->put(vm.names.copyWithin, Value(true));
+    unscopable_list->put(vm.names.entries, Value(true));
+    unscopable_list->put(vm.names.fill, Value(true));
+    unscopable_list->put(vm.names.find, Value(true));
+    unscopable_list->put(vm.names.findIndex, Value(true));
+    unscopable_list->put(vm.names.flat, Value(true));
+    unscopable_list->put(vm.names.flatMap, Value(true));
+    unscopable_list->put(vm.names.includes, Value(true));
+    unscopable_list->put(vm.names.keys, Value(true));
+    unscopable_list->put(vm.names.values, Value(true));
+
+    define_property(vm.well_known_symbol_unscopables(), unscopable_list, Attribute::Configurable);
 }
 
 ArrayPrototype::~ArrayPrototype()
@@ -203,12 +223,52 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::push)
 // 23.1.3.31 Array.prototype.unshift ( ...items ), https://tc39.es/ecma262/#sec-array.prototype.unshift
 JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::unshift)
 {
-    auto* array = Array::typed_this(vm, global_object);
-    if (!array)
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
         return {};
-    for (size_t i = 0; i < vm.argument_count(); ++i)
-        array->indexed_properties().insert(i, vm.argument(i));
-    return Value(static_cast<i32>(array->indexed_properties().array_like_size()));
+    auto length = length_of_array_like(global_object, *this_object);
+    if (vm.exception())
+        return {};
+    auto arg_count = vm.argument_count();
+    size_t new_length = length + arg_count;
+    if (arg_count > 0) {
+        if (new_length > MAX_ARRAY_LIKE_INDEX) {
+            vm.throw_exception<TypeError>(global_object, ErrorType::ArrayMaxSize);
+            return {};
+        }
+
+        for (size_t k = length; k > 0; --k) {
+            auto from = k - 1;
+            auto to = k + arg_count - 1;
+
+            bool from_present = this_object->has_property(from);
+            if (vm.exception())
+                return {};
+            if (from_present) {
+                auto from_value = this_object->get(from).value_or(js_undefined());
+                if (vm.exception())
+                    return {};
+                this_object->put(to, from_value);
+                if (vm.exception())
+                    return {};
+            } else {
+                this_object->delete_property(to);
+                if (vm.exception())
+                    return {};
+            }
+        }
+
+        for (size_t j = 0; j < arg_count; j++) {
+            this_object->put(j, vm.argument(j));
+            if (vm.exception())
+                return {};
+        }
+    }
+
+    this_object->put(vm.names.length, Value(new_length));
+    if (vm.exception())
+        return {};
+    return Value(new_length);
 }
 
 // 23.1.3.19 Array.prototype.pop ( ), https://tc39.es/ecma262/#sec-array.prototype.pop
@@ -246,15 +306,50 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::pop)
 // 23.1.3.24 Array.prototype.shift ( ), https://tc39.es/ecma262/#sec-array.prototype.shift
 JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::shift)
 {
-    auto* array = Array::typed_this(vm, global_object);
-    if (!array)
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
         return {};
-    if (array->indexed_properties().is_empty())
-        return js_undefined();
-    auto result = array->indexed_properties().take_first(array);
+    auto length = length_of_array_like(global_object, *this_object);
     if (vm.exception())
         return {};
-    return result.value.value_or(js_undefined());
+    if (length == 0) {
+        this_object->put(vm.names.length, Value(0));
+        if (vm.exception())
+            return {};
+        return js_undefined();
+    }
+    auto first = this_object->get(0).value_or(js_undefined());
+    if (vm.exception())
+        return {};
+
+    for (size_t k = 1; k < length; ++k) {
+        size_t from = k;
+        size_t to = k - 1;
+        bool from_present = this_object->has_property(from);
+        if (vm.exception())
+            return {};
+        if (from_present) {
+            auto from_value = this_object->get(from).value_or(js_undefined());
+            if (vm.exception())
+                return {};
+            this_object->put(to, from_value);
+            if (vm.exception())
+                return {};
+        } else {
+            this_object->delete_property(to);
+            if (vm.exception())
+                return {};
+        }
+    }
+
+    this_object->delete_property(length - 1);
+    if (vm.exception())
+        return {};
+
+    this_object->put(vm.names.length, Value(length - 1));
+    if (vm.exception())
+        return {};
+    return first;
 }
 
 // 23.1.3.30 Array.prototype.toString ( ), https://tc39.es/ecma262/#sec-array.prototype.tostring
@@ -360,27 +455,87 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::join)
 // 23.1.3.1 Array.prototype.concat ( ...items ), https://tc39.es/ecma262/#sec-array.prototype.concat
 JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::concat)
 {
-    auto* array = Array::typed_this(vm, global_object);
-    if (!array)
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
         return {};
 
-    auto* new_array = Array::create(global_object);
-    new_array->indexed_properties().append_all(array, array->indexed_properties());
+    // FIXME: Use ArraySpeciesCreate.
+    auto new_array = Array::create(global_object);
+
+    size_t n = 0;
+
+    // 23.1.3.1.1 IsConcatSpreadable ( O ), https://tc39.es/ecma262/#sec-isconcatspreadable
+    auto is_concat_spreadable = [&vm, &global_object](Value const& val) {
+        if (!val.is_object()) {
+            return false;
+        }
+        auto* object = val.to_object(global_object);
+        if (vm.exception())
+            return false;
+
+        auto spreadable = object->get(vm.well_known_symbol_is_concat_spreadable()).value_or(js_undefined());
+        if (vm.exception())
+            return false;
+
+        if (!spreadable.is_undefined())
+            return spreadable.to_boolean();
+
+        return object->is_array();
+    };
+
+    auto append_to_new_array = [&vm, &is_concat_spreadable, &new_array, &global_object, &n](Value arg) {
+        auto spreadable = is_concat_spreadable(arg);
+        if (vm.exception())
+            return;
+        if (spreadable) {
+            VERIFY(arg.is_object());
+            Object& obj = arg.as_object();
+            size_t k = 0;
+            auto length = length_of_array_like(global_object, obj);
+            if (vm.exception())
+                return;
+
+            if (length + k > MAX_ARRAY_LIKE_INDEX) {
+                vm.throw_exception<TypeError>(global_object, ErrorType::ArrayMaxSize);
+                return;
+            }
+            while (k < length) {
+                auto k_exists = obj.has_property(k);
+                if (vm.exception())
+                    return;
+                if (k_exists) {
+                    auto k_value = obj.get(k).value_or(js_undefined());
+                    if (vm.exception())
+                        return;
+                    new_array->put(n, k_value);
+                }
+                ++n;
+                ++k;
+            }
+        } else {
+            if (n >= MAX_ARRAY_LIKE_INDEX) {
+                vm.throw_exception<TypeError>(global_object, ErrorType::ArrayMaxSize);
+                return;
+            }
+            new_array->put(n, arg);
+            ++n;
+        }
+    };
+
+    append_to_new_array(this_object);
     if (vm.exception())
         return {};
 
     for (size_t i = 0; i < vm.argument_count(); ++i) {
         auto argument = vm.argument(i);
-        if (argument.is_array(global_object)) {
-            auto& argument_object = argument.as_object();
-            new_array->indexed_properties().append_all(&argument_object, argument_object.indexed_properties());
-            continue;
-        }
+        append_to_new_array(argument);
         if (vm.exception())
             return {};
-        new_array->indexed_properties().append(argument);
     }
 
+    new_array->put(vm.names.length, Value(n));
+    if (vm.exception())
+        return {};
     return Value(new_array);
 }
 
@@ -605,26 +760,62 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::reduce_right)
 // 23.1.3.23 Array.prototype.reverse ( ), https://tc39.es/ecma262/#sec-array.prototype.reverse
 JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::reverse)
 {
-    auto* array = Array::typed_this(vm, global_object);
-    if (!array)
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
+        return {};
+    auto length = length_of_array_like(global_object, *this_object);
+    if (vm.exception())
         return {};
 
-    if (array->indexed_properties().is_empty())
-        return array;
+    auto middle = length / 2;
+    for (size_t lower = 0; lower < middle; ++lower) {
+        auto upper = length - lower - 1;
 
-    MarkedValueList array_reverse(vm.heap());
-    auto size = array->indexed_properties().array_like_size();
-    array_reverse.ensure_capacity(size);
-
-    for (ssize_t i = size - 1; i >= 0; --i) {
-        array_reverse.append(array->get(i));
+        auto lower_exists = this_object->has_property(lower);
         if (vm.exception())
             return {};
+        Value lower_value;
+        if (lower_exists) {
+            lower_value = this_object->get(lower).value_or(js_undefined());
+            if (vm.exception())
+                return {};
+        }
+
+        auto upper_exists = this_object->has_property(upper);
+        if (vm.exception())
+            return {};
+        Value upper_value;
+        if (upper_exists) {
+            upper_value = this_object->get(upper).value_or(js_undefined());
+            if (vm.exception())
+                return {};
+        }
+
+        if (lower_exists && upper_exists) {
+            this_object->put(lower, upper_value);
+            if (vm.exception())
+                return {};
+            this_object->put(upper, lower_value);
+            if (vm.exception())
+                return {};
+        } else if (!lower_exists && upper_exists) {
+            this_object->put(lower, upper_value);
+            if (vm.exception())
+                return {};
+            this_object->delete_property(upper);
+            if (vm.exception())
+                return {};
+        } else if (lower_exists && !upper_exists) {
+            this_object->delete_property(lower);
+            if (vm.exception())
+                return {};
+            this_object->put(upper, lower_value);
+            if (vm.exception())
+                return {};
+        }
     }
 
-    array->set_indexed_property_elements(move(array_reverse));
-
-    return array;
+    return this_object;
 }
 
 static void array_merge_sort(VM& vm, GlobalObject& global_object, Function* compare_func, MarkedValueList& arr_to_sort)
@@ -1092,6 +1283,16 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::values)
     return ArrayIterator::create(global_object, this_object, Object::PropertyKind::Value);
 }
 
+// 23.1.3.16 Array.prototype.entries ( ), https://tc39.es/ecma262/#sec-array.prototype.entries
+JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::entries)
+{
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
+        return {};
+
+    return ArrayIterator::create(global_object, this_object, Object::PropertyKind::KeyAndValue);
+}
+
 // 23.1.3.16 Array.prototype.keys ( ), https://tc39.es/ecma262/#sec-array.prototype.keys
 JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::keys)
 {
@@ -1102,29 +1303,48 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::keys)
     return ArrayIterator::create(global_object, this_object, Object::PropertyKind::Key);
 }
 
-static void recursive_array_flat(VM& vm, GlobalObject& global_object, Array& new_array, Object& array, double depth)
+// 23.1.3.10.1 FlattenIntoArray ( target, source, sourceLen, start, depth [ , mapperFunction [ , thisArg ] ] ), https://tc39.es/ecma262/#sec-flattenintoarray
+static size_t flatten_into_array(VM& vm, GlobalObject& global_object, Array& new_array, Object& array, size_t target_index, double depth, Function* mapper_func = {}, Value this_arg = {})
 {
+    VERIFY(!mapper_func || (!this_arg.is_empty() && depth == 1));
     auto array_length = length_of_array_like(global_object, array);
     if (vm.exception())
-        return;
+        return {};
 
     for (size_t j = 0; j < array_length; ++j) {
-        auto value = array.get(j);
+        auto value_exists = array.has_property(j);
         if (vm.exception())
-            return;
+            return {};
+
+        if (!value_exists)
+            continue;
+        auto value = array.get(j).value_or(js_undefined());
+        if (vm.exception())
+            return {};
+
+        if (mapper_func) {
+            value = vm.call(*mapper_func, this_arg, value, Value(j), &array);
+            if (vm.exception())
+                return {};
+        }
 
         if (depth > 0 && value.is_array(global_object)) {
-            recursive_array_flat(vm, global_object, new_array, value.as_array(), depth - 1);
+            target_index = flatten_into_array(vm, global_object, new_array, value.as_array(), target_index, depth - 1);
+            if (vm.exception())
+                return {};
             continue;
         }
         if (vm.exception())
-            return;
+            return {};
         if (!value.is_empty()) {
-            new_array.indexed_properties().append(value);
+            new_array.put(target_index, value);
             if (vm.exception())
-                return;
+                return {};
+
+            ++target_index;
         }
     }
+    return target_index;
 }
 
 // 23.1.3.10 Array.prototype.flat ( [ depth ] ), https://tc39.es/ecma262/#sec-array.prototype.flat
@@ -1147,10 +1367,117 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::flat)
         }
     }
 
-    recursive_array_flat(vm, global_object, *new_array, *this_object, depth);
+    flatten_into_array(vm, global_object, *new_array, *this_object, 0, depth);
     if (vm.exception())
         return {};
     return new_array;
+}
+
+// 23.1.3.11 Array.prototype.flatMap ( mapperFunction [ , thisArg ] ), https://tc39.es/ecma262/#sec-array.prototype.flatmap
+JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::flat_map)
+{
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
+        return {};
+
+    auto* mapper_function = callback_from_args(global_object, "flatMap");
+    if (!mapper_function)
+        return {};
+
+    auto this_argument = vm.argument(1);
+
+    // FIXME: Use ArraySpeciesCreate.
+    auto new_array = Array::create(global_object);
+
+    flatten_into_array(vm, global_object, *new_array, *this_object, 0, 1, mapper_function, this_argument);
+    if (vm.exception())
+        return {};
+
+    return new_array;
+}
+
+// 23.1.3.3 Array.prototype.copyWithin ( target, start [ , end ] ), https://tc39.es/ecma262/#sec-array.prototype.copywithin
+JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::copy_within)
+{
+    auto* this_object = vm.this_value(global_object).to_object(global_object);
+    if (!this_object)
+        return {};
+    auto length = length_of_array_like(global_object, *this_object);
+    if (vm.exception())
+        return {};
+
+    auto relative_target = vm.argument(0).to_integer_or_infinity(global_object);
+    if (vm.exception())
+        return {};
+
+    double to;
+    if (relative_target < 0)
+        to = max(length + relative_target, 0.0);
+    else
+        to = min(relative_target, (double)length);
+
+    auto relative_start = vm.argument(1).to_integer_or_infinity(global_object);
+    if (vm.exception())
+        return {};
+
+    double from;
+    if (relative_start < 0)
+        from = max(length + relative_start, 0.0);
+    else
+        from = min(relative_start, (double)length);
+
+    auto relative_end = vm.argument(2).is_undefined() ? length : vm.argument(2).to_integer_or_infinity(global_object);
+    if (vm.exception())
+        return {};
+
+    double final;
+    if (relative_end < 0)
+        final = max(length + relative_end, 0.0);
+    else
+        final = min(relative_end, (double)length);
+
+    double count = min(final - from, length - to);
+
+    i32 direction = 1;
+
+    if (from < to && to < from + count) {
+        direction = -1;
+        from = from + count - 1;
+        to = to + count - 1;
+    }
+
+    if (count < 0) {
+        return this_object;
+    }
+
+    size_t from_i = from;
+    size_t to_i = to;
+    size_t count_i = count;
+
+    while (count_i > 0) {
+        auto from_present = this_object->has_property(from_i);
+        if (vm.exception())
+            return {};
+
+        if (from_present) {
+            auto from_value = this_object->get(from_i).value_or(js_undefined());
+            if (vm.exception())
+                return {};
+            this_object->put(to_i, from_value);
+            if (vm.exception())
+                return {};
+        } else {
+            this_object->delete_property(to_i);
+            if (vm.exception())
+                return {};
+        }
+
+        from_i += direction;
+        to_i += direction;
+        --count_i;
+    }
+
+    return this_object;
 }
 
 // 1.1 Array.prototype.at ( index ), https://tc39.es/proposal-relative-indexing-method/#sec-array.prototype.at
@@ -1176,7 +1503,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::at)
     }
     if (index.has_overflow() || index.value() >= length)
         return js_undefined();
-    return this_object->get(index.value());
+    return this_object->get(index.value()).value_or(js_undefined());
 }
 
 }

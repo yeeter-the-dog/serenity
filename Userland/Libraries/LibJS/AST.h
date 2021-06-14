@@ -348,13 +348,15 @@ public:
 
 class YieldExpression final : public Expression {
 public:
-    explicit YieldExpression(SourceRange source_range, RefPtr<Expression> argument)
+    explicit YieldExpression(SourceRange source_range, RefPtr<Expression> argument, bool is_yield_from)
         : Expression(move(source_range))
         , m_argument(move(argument))
+        , m_is_yield_from(is_yield_from)
     {
     }
 
     Expression const* argument() const { return m_argument; }
+    bool is_yield_from() const { return m_is_yield_from; }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
@@ -362,6 +364,7 @@ public:
 
 private:
     RefPtr<Expression> m_argument;
+    bool m_is_yield_from { false };
 };
 
 class ReturnStatement final : public Statement {
@@ -768,13 +771,15 @@ private:
 
 class Identifier final : public Expression {
 public:
-    explicit Identifier(SourceRange source_range, FlyString const& string)
-        : Expression(move(source_range))
-        , m_string(string)
+    explicit Identifier(SourceRange source_range, FlyString string, Optional<size_t> argument_index = {})
+        : Expression(source_range)
+        , m_string(move(string))
+        , m_argument_index(move(argument_index))
     {
     }
 
     FlyString const& string() const { return m_string; }
+    Optional<size_t> const& argument_index() const { return m_argument_index; }
 
     virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
@@ -785,6 +790,7 @@ private:
     virtual bool is_identifier() const override { return true; }
 
     FlyString m_string;
+    Optional<size_t> m_argument_index;
 };
 
 class ClassMethod final : public ASTNode {
