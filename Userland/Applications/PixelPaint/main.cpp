@@ -96,13 +96,14 @@ int main(int argc, char** argv)
         window);
 
     auto open_image_file = [&](auto& path) {
-        auto image = PixelPaint::Image::try_create_from_file(path);
-        if (!image) {
-            GUI::MessageBox::show_error(window, String::formatted("Invalid image file: {}", path));
+        auto image_or_error = PixelPaint::Image::try_create_from_file(path);
+        if (image_or_error.is_error()) {
+            GUI::MessageBox::show_error(window, String::formatted("Unable to open file: {}", path));
             return;
         }
+        auto& image = *image_or_error.value();
         image_editor.set_image(image);
-        layer_list_widget.set_image(image);
+        layer_list_widget.set_image(&image);
     };
 
     auto open_image_action = GUI::CommonActions::make_open_action([&](auto&) {
@@ -115,10 +116,14 @@ int main(int argc, char** argv)
     auto save_image_as_action = GUI::CommonActions::make_save_as_action([&](auto&) {
         if (!image_editor.image())
             return;
-        Optional<String> save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "pp");
+        auto save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "pp");
         if (!save_path.has_value())
             return;
-        image_editor.image()->save(save_path.value());
+        auto result = image_editor.image()->write_to_file(save_path.value());
+        if (result.is_error()) {
+            GUI::MessageBox::show_error(window, String::formatted("Could not save {}: {}", save_path.value(), result.error()));
+            return;
+        }
     });
 
     auto menubar = GUI::Menubar::construct();
@@ -133,10 +138,12 @@ int main(int argc, char** argv)
             "As &BMP", [&](auto&) {
                 if (!image_editor.image())
                     return;
-                Optional<String> save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "bmp");
+                auto save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "bmp");
                 if (!save_path.has_value())
                     return;
-                image_editor.image()->export_bmp(save_path.value());
+                auto result = image_editor.image()->export_bmp_to_file(save_path.value());
+                if (result.is_error())
+                    GUI::MessageBox::show_error(window, String::formatted("Export to BMP failed: {}", result.error()));
             },
             window));
     export_submenu.add_action(
@@ -144,13 +151,12 @@ int main(int argc, char** argv)
             "As &PNG", [&](auto&) {
                 if (!image_editor.image())
                     return;
-
-                Optional<String> save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "png");
-
+                auto save_path = GUI::FilePicker::get_save_filepath(window, "untitled", "png");
                 if (!save_path.has_value())
                     return;
-
-                image_editor.image()->export_png(save_path.value());
+                auto result = image_editor.image()->export_bmp_to_file(save_path.value());
+                if (result.is_error())
+                    GUI::MessageBox::show_error(window, String::formatted("Export to PNG failed: {}", result.error()));
             },
             window));
 
@@ -206,6 +212,34 @@ int main(int argc, char** argv)
         image_editor.redo();
     });
     edit_menu.add_action(redo_action);
+
+    edit_menu.add_separator();
+    edit_menu.add_action(GUI::CommonActions::make_select_all_action([&](auto&) {
+        VERIFY(image_editor.image());
+        if (!image_editor.active_layer())
+            return;
+        image_editor.selection().set(image_editor.active_layer()->relative_rect());
+    }));
+    edit_menu.add_action(GUI::Action::create(
+        "Clear &Selection", { Mod_Ctrl | Mod_Shift, Key_A }, [&](auto&) {
+            image_editor.selection().clear();
+        },
+        window));
+
+    edit_menu.add_separator();
+    edit_menu.add_action(GUI::Action::create(
+        "&Swap Colors", { Mod_None, Key_X }, [&](auto&) {
+            auto old_primary_color = image_editor.primary_color();
+            image_editor.set_primary_color(image_editor.secondary_color());
+            image_editor.set_secondary_color(old_primary_color);
+        },
+        window));
+    edit_menu.add_action(GUI::Action::create(
+        "&Default Colors", { Mod_None, Key_D }, [&](auto&) {
+            image_editor.set_primary_color(Color::Black);
+            image_editor.set_secondary_color(Color::White);
+        },
+        window));
 
     auto& view_menu = menubar->add_menu("&View");
 

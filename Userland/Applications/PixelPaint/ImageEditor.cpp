@@ -36,6 +36,7 @@ void ImageEditor::set_image(RefPtr<Image> image)
     if (m_image)
         m_image->remove_client(*this);
 
+    m_selection.clear();
     m_image = move(image);
     m_active_layer = nullptr;
     m_undo_stack = make<GUI::UndoStack>();
@@ -98,7 +99,7 @@ void ImageEditor::paint_event(GUI::PaintEvent& event)
     }
 
     if (!m_selection.is_empty())
-        m_selection.paint(painter, *this);
+        m_selection.paint(painter);
 }
 
 Gfx::FloatRect ImageEditor::layer_rect_to_editor_rect(Layer const& layer, Gfx::IntRect const& layer_rect) const

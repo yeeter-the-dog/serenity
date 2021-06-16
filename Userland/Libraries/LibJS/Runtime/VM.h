@@ -188,6 +188,7 @@ public:
     bool should_unwind() const { return m_unwind_until != ScopeType::None; }
 
     ScopeType unwind_until() const { return m_unwind_until; }
+    FlyString unwind_until_label() const { return m_unwind_until_label; }
 
     Value get_variable(const FlyString& name, GlobalObject&);
     void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false, ScopeObject* specific_scope = nullptr);
@@ -243,6 +244,9 @@ public:
     void run_queued_promise_jobs();
     void enqueue_promise_job(NativeFunction&);
 
+    void run_queued_finalization_registry_cleanup_jobs();
+    void enqueue_finalization_registry_cleanup_job(FinalizationRegistry&);
+
     void promise_rejection_tracker(const Promise&, Promise::RejectionOperation) const;
 
     AK::Function<void()> on_call_stack_emptied;
@@ -270,6 +274,8 @@ private:
     HashMap<String, Symbol*> m_global_symbol_map;
 
     Vector<NativeFunction*> m_promise_jobs;
+
+    Vector<FinalizationRegistry*> m_finalization_registry_cleanup_jobs;
 
     PrimitiveString* m_empty_string { nullptr };
     PrimitiveString* m_single_ascii_character_strings[128] {};

@@ -12,9 +12,9 @@ namespace PixelPaint {
 
 constexpr int marching_ant_length = 4;
 
-void Selection::paint(Gfx::Painter& painter, ImageEditor const& editor)
+void Selection::paint(Gfx::Painter& painter)
 {
-    draw_marching_ants(painter, editor.image_rect_to_editor_rect(m_rect).to_type<int>());
+    draw_marching_ants(painter, m_editor.image_rect_to_editor_rect(m_rect).to_type<int>());
 }
 
 Selection::Selection(ImageEditor& editor)
@@ -22,7 +22,7 @@ Selection::Selection(ImageEditor& editor)
 {
     m_marching_ants_timer = Core::Timer::create_repeating(80, [this] {
         ++m_marching_ants_offset;
-        m_marching_ants_offset %= marching_ant_length;
+        m_marching_ants_offset %= (marching_ant_length * 2);
         if (!is_empty() || m_in_interactive_selection)
             m_editor.update();
     });
@@ -34,8 +34,11 @@ void Selection::draw_marching_ants(Gfx::Painter& painter, Gfx::IntRect const& re
     int offset = m_marching_ants_offset;
 
     auto draw_pixel = [&](int x, int y) {
-        if ((offset % marching_ant_length) != 0)
+        if ((offset % (marching_ant_length * 2)) < marching_ant_length) {
             painter.set_pixel(x, y, Color::Black);
+        } else {
+            painter.set_pixel(x, y, Color::White);
+        }
         offset++;
     };
 
@@ -54,6 +57,12 @@ void Selection::draw_marching_ants(Gfx::Painter& painter, Gfx::IntRect const& re
     // Left line
     for (int y = rect.bottom() - 1; y > rect.top(); --y)
         draw_pixel(rect.left(), y);
+}
+
+void Selection::clear()
+{
+    m_rect = {};
+    m_editor.update();
 }
 
 }

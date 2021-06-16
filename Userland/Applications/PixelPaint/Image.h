@@ -10,6 +10,7 @@
 #include <AK/NonnullRefPtrVector.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
+#include <AK/Result.h>
 #include <AK/Vector.h>
 #include <LibGUI/Command.h>
 #include <LibGUI/Forward.h>
@@ -37,8 +38,11 @@ protected:
 class Image : public RefCounted<Image> {
 public:
     static RefPtr<Image> try_create_with_size(Gfx::IntSize const&);
-    static RefPtr<Image> try_create_from_file(String const& file_path);
+    static Result<NonnullRefPtr<Image>, String> try_create_from_file(String const& file_path);
     static RefPtr<Image> try_create_from_bitmap(NonnullRefPtr<Gfx::Bitmap>);
+
+    // This generates a new Bitmap with the final image (all layers composed according to their attributes.)
+    RefPtr<Gfx::Bitmap> try_compose_bitmap() const;
 
     size_t layer_count() const { return m_layers.size(); }
     Layer const& layer(size_t index) const { return m_layers.at(index); }
@@ -51,10 +55,10 @@ public:
     RefPtr<Image> take_snapshot() const;
     void restore_snapshot(Image const&);
 
-    void paint_into(GUI::Painter&, Gfx::IntRect const& dest_rect);
-    void save(String const& file_path) const;
-    void export_bmp(String const& file_path);
-    void export_png(String const& file_path);
+    void paint_into(GUI::Painter&, Gfx::IntRect const& dest_rect) const;
+    Result<void, String> write_to_file(String const& file_path) const;
+    Result<void, String> export_bmp_to_file(String const& file_path);
+    Result<void, String> export_png_to_file(String const& file_path);
 
     void move_layer_to_front(Layer&);
     void move_layer_to_back(Layer&);
@@ -75,7 +79,7 @@ public:
 private:
     explicit Image(Gfx::IntSize const&);
 
-    static RefPtr<Image> try_create_from_pixel_paint_file(String const& file_path);
+    static Result<NonnullRefPtr<Image>, String> try_create_from_pixel_paint_file(String const& file_path);
 
     void did_change();
     void did_modify_layer_stack();
