@@ -28,6 +28,8 @@ public:
     static UHCIController& the();
     virtual ~UHCIController() override;
 
+    virtual const char* purpose() const override { return "UHCI"; }
+
     void reset();
     void stop();
     void start();
@@ -58,7 +60,7 @@ private:
     void write_portsc1(u16 value) { m_io_base.offset(0x10).out(value); }
     void write_portsc2(u16 value) { m_io_base.offset(0x12).out(value); }
 
-    virtual void handle_irq(const RegisterState&) override;
+    virtual bool handle_irq(const RegisterState&) override;
 
     void create_structures();
     void setup_schedule();
