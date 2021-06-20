@@ -22,6 +22,7 @@ set(SOURCES
     Lexer.cpp
     MarkupGenerator.cpp
     Parser.cpp
+    Runtime/AbstractOperations.cpp
     Runtime/AggregateError.cpp
     Runtime/AggregateErrorConstructor.cpp
     Runtime/AggregateErrorPrototype.cpp
@@ -59,7 +60,10 @@ set(SOURCES
     Runtime/FunctionConstructor.cpp
     Runtime/Function.cpp
     Runtime/FunctionPrototype.cpp
+    Runtime/GeneratorFunctionConstructor.cpp
+    Runtime/GeneratorFunctionPrototype.cpp
     Runtime/GeneratorObject.cpp
+    Runtime/GeneratorObjectPrototype.cpp
     Runtime/GlobalObject.cpp
     Runtime/IndexedProperties.cpp
     Runtime/IteratorOperations.cpp

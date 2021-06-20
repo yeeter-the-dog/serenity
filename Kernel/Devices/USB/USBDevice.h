@@ -17,7 +17,7 @@ namespace Kernel::USB {
 // glues together:
 //
 // https://www.ftdichip.com/Support/Documents/TechnicalNotes/TN_113_Simplified%20Description%20of%20USB%20Device%20Enumeration.pdf
-class Device {
+class Device : public RefCounted<Device> {
 public:
     enum class PortNumber : u8 {
         Port1 = 0,
@@ -30,8 +30,7 @@ public:
     };
 
 public:
-    static KResultOr<NonnullOwnPtr<Device>> try_create(PortNumber, DeviceSpeed);
-    static Device* get(PortNumber);
+    static KResultOr<NonnullRefPtr<Device>> try_create(PortNumber, DeviceSpeed);
 
     Device(PortNumber, DeviceSpeed, NonnullOwnPtr<Pipe> default_pipe);
     ~Device();
@@ -43,15 +42,17 @@ public:
 
     u8 address() const { return m_address; }
 
-private:
+    const USBDeviceDescriptor& device_descriptor() const { return m_device_descriptor; }
+
 private:
     PortNumber m_device_port;   // What port is this device attached to
     DeviceSpeed m_device_speed; // What speed is this device running at
     u8 m_address { 0 };         // USB address assigned to this device
 
     // Device description
-    u16 m_vendor_id { 0 };  // This device's vendor ID assigned by the USB group
-    u16 m_product_id { 0 }; // This device's product ID assigned by the USB group
+    u16 m_vendor_id { 0 };                   // This device's vendor ID assigned by the USB group
+    u16 m_product_id { 0 };                  // This device's product ID assigned by the USB group
+    USBDeviceDescriptor m_device_descriptor; // Device Descriptor obtained from USB Device
 
     NonnullOwnPtr<Pipe> m_default_pipe; // Default communication pipe (endpoint0) used during enumeration
 };

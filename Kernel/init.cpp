@@ -75,7 +75,7 @@ multiboot_module_entry_t multiboot_copy_boot_modules_array[16];
 size_t multiboot_copy_boot_modules_count;
 
 extern "C" const char kernel_cmdline[4096];
-bool g_in_early_boot;
+READONLY_AFTER_INIT bool g_in_early_boot;
 
 namespace Kernel {
 
@@ -158,10 +158,10 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
 
     NullDevice::initialize();
     if (!get_serial_debug())
-        new SerialDevice(IOAddress(SERIAL_COM1_ADDR), 64);
-    new SerialDevice(IOAddress(SERIAL_COM2_ADDR), 65);
-    new SerialDevice(IOAddress(SERIAL_COM3_ADDR), 66);
-    new SerialDevice(IOAddress(SERIAL_COM4_ADDR), 67);
+        (void)SerialDevice::must_create(0).leak_ref();
+    (void)SerialDevice::must_create(1).leak_ref();
+    (void)SerialDevice::must_create(2).leak_ref();
+    (void)SerialDevice::must_create(3).leak_ref();
 
     VMWareBackdoor::the(); // don't wait until first mouse packet
     HIDManagement::initialize();
@@ -243,10 +243,10 @@ void init_stage2(void*)
     NetworkingManagement::the().initialize();
     Syscall::initialize();
 
-    new MemoryDevice;
-    new ZeroDevice;
-    new FullDevice;
-    new RandomDevice;
+    (void)MemoryDevice::must_create().leak_ref();
+    (void)ZeroDevice::must_create().leak_ref();
+    (void)FullDevice::must_create().leak_ref();
+    (void)RandomDevice::must_create().leak_ref();
     PTYMultiplexer::initialize();
     SB16::detect();
 
@@ -259,14 +259,14 @@ void init_stage2(void*)
 
     load_kernel_symbol_table();
 
+    // Switch out of early boot mode.
+    g_in_early_boot = false;
+
     // NOTE: Everything marked READONLY_AFTER_INIT becomes non-writable after this point.
     MM.protect_readonly_after_init_memory();
 
     // NOTE: Everything marked UNMAP_AFTER_INIT becomes inaccessible after this point.
     MM.unmap_memory_after_init();
-
-    // Switch out of early boot mode.
-    g_in_early_boot = false;
 
     int error;
 

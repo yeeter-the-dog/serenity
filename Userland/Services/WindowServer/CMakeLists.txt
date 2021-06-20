@@ -21,10 +21,13 @@ set(SOURCES
     Menu.cpp
     MenuItem.cpp
     MenuManager.cpp
+    MultiScaleBitmaps.cpp
     Screen.cpp
+    ScreenLayout.cpp
     Window.cpp
     WindowFrame.cpp
     WindowManager.cpp
+    WindowStack.cpp
     WindowSwitcher.cpp
     WindowServerEndpoint.h
     WindowClientEndpoint.h

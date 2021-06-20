@@ -299,8 +299,6 @@ MarkedValueList Object::get_own_properties(PropertyKind kind, bool only_enumerab
             if (vm().exception())
                 return MarkedValueList { heap() };
         }
-
-        return properties;
     }
 
     if (return_type != GetOwnPropertyReturnType::SymbolOnly) {
@@ -677,6 +675,20 @@ bool Object::put_own_property(const StringOrSymbol& property_name, Value value, 
                 vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
             return false;
         }
+    }
+
+    // FIXME: Instead of adding back existing attributes we should just stop overwriting them
+    if (!attributes.has_configurable() && metadata.value().attributes.is_configurable()) {
+        attributes.set_has_configurable();
+        attributes.set_configurable();
+    }
+    if (!attributes.has_enumerable() && metadata.value().attributes.is_enumerable()) {
+        attributes.set_has_enumerable();
+        attributes.set_enumerable();
+    }
+    if (!value.is_accessor() && !attributes.has_writable() && metadata.value().attributes.is_writable()) {
+        attributes.set_has_writable();
+        attributes.set_writable();
     }
 
     if (mode == PutOwnPropertyMode::DefineProperty && attributes != metadata.value().attributes) {

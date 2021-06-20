@@ -162,6 +162,30 @@ public:
     void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
 };
 
+// NOTE: This instruction is variable-width depending on the number of excluded names
+class CopyObjectExcludingProperties final : public Instruction {
+public:
+    CopyObjectExcludingProperties(Register from_object, Vector<Register> const& excluded_names)
+        : Instruction(Type::CopyObjectExcludingProperties)
+        , m_from_object(from_object)
+        , m_excluded_names_count(excluded_names.size())
+    {
+        for (size_t i = 0; i < m_excluded_names_count; i++)
+            m_excluded_names[i] = excluded_names[i];
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
+
+    size_t length_impl() const { return sizeof(*this) + sizeof(Register) * m_excluded_names_count; }
+
+private:
+    Register m_from_object;
+    size_t m_excluded_names_count { 0 };
+    Register m_excluded_names[];
+};
+
 class NewBigInt final : public Instruction {
 public:
     explicit NewBigInt(Crypto::SignedBigInteger bigint)
@@ -181,6 +205,12 @@ private:
 // NOTE: This instruction is variable-width depending on the number of elements!
 class NewArray final : public Instruction {
 public:
+    NewArray()
+        : Instruction(Type::NewArray)
+        , m_element_count(0)
+    {
+    }
+
     explicit NewArray(Vector<Register> const& elements)
         : Instruction(Type::NewArray)
         , m_element_count(elements.size())
@@ -201,6 +231,18 @@ public:
 private:
     size_t m_element_count { 0 };
     Register m_elements[];
+};
+
+class IteratorToArray final : public Instruction {
+public:
+    IteratorToArray()
+        : Instruction(Type::IteratorToArray)
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
 };
 
 class ConcatString final : public Instruction {
@@ -370,6 +412,17 @@ class JumpNullish final : public Jump {
 public:
     explicit JumpNullish(Optional<Label> true_target = {}, Optional<Label> false_target = {})
         : Jump(Type::JumpNullish, move(true_target), move(false_target))
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+};
+
+class JumpUndefined final : public Jump {
+public:
+    explicit JumpUndefined(Optional<Label> true_target = {}, Optional<Label> false_target = {})
+        : Jump(Type::JumpUndefined, move(true_target), move(false_target))
     {
     }
 
@@ -571,6 +624,7 @@ public:
         , m_variables(move(variables))
     {
     }
+
     void execute_impl(Bytecode::Interpreter&) const;
     String to_string_impl(Bytecode::Executable const&) const;
     void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
@@ -593,6 +647,54 @@ public:
 
 private:
     size_t m_index { 0 };
+};
+
+class GetIterator final : public Instruction {
+public:
+    GetIterator()
+        : Instruction(Type::GetIterator)
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
+};
+
+class IteratorNext final : public Instruction {
+public:
+    IteratorNext()
+        : Instruction(Type::IteratorNext)
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
+};
+
+class IteratorResultDone final : public Instruction {
+public:
+    IteratorResultDone()
+        : Instruction(Type::IteratorResultDone)
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
+};
+
+class IteratorResultValue final : public Instruction {
+public:
+    IteratorResultValue()
+        : Instruction(Type::IteratorResultValue)
+    {
+    }
+
+    void execute_impl(Bytecode::Interpreter&) const;
+    String to_string_impl(Bytecode::Executable const&) const;
+    void replace_references_impl(BasicBlock const&, BasicBlock const&) { }
 };
 
 }
@@ -635,6 +737,8 @@ ALWAYS_INLINE size_t Instruction::length() const
         return static_cast<Op::Call const&>(*this).length_impl();
     else if (type() == Type::NewArray)
         return static_cast<Op::NewArray const&>(*this).length_impl();
+    else if (type() == Type::CopyObjectExcludingProperties)
+        return static_cast<Op::CopyObjectExcludingProperties const&>(*this).length_impl();
 
 #define __BYTECODE_OP(op) \
     case Type::op:        \
