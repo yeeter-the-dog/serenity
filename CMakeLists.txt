@@ -99,6 +99,10 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang$")
     add_compile_options(-Wno-overloaded-virtual -Wno-user-defined-literals)
 endif()
 
+if (CMAKE_SYSTEM_NAME MATCHES Darwin)
+    add_compile_options(-Wno-deprecated-declarations)
+endif()
+
 if (ENABLE_ALL_DEBUG_FACILITIES)
     set(ENABLE_ALL_THE_DEBUG_MACROS ON)
     set(ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS ON)
