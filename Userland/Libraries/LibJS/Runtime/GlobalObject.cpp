@@ -128,7 +128,8 @@ void GlobalObject::initialize_global_object()
     define_native_function(vm.names.isFinite, is_finite, 1, attr);
     define_native_function(vm.names.parseFloat, parse_float, 1, attr);
     define_native_function(vm.names.parseInt, parse_int, 2, attr);
-    define_native_function(vm.names.eval, eval, 1, attr);
+    m_true_eval_function = define_native_function(vm.names.eval, eval, 1, attr);
+
     define_native_function(vm.names.encodeURI, encode_uri, 1, attr);
     define_native_function(vm.names.decodeURI, decode_uri, 1, attr);
     define_native_function(vm.names.encodeURIComponent, encode_uri_component, 1, attr);
@@ -205,6 +206,8 @@ void GlobalObject::visit_edges(Visitor& visitor)
     visitor.visit(m_##snake_name##_prototype);
     JS_ENUMERATE_ITERATOR_PROTOTYPES
 #undef __JS_ENUMERATE
+
+    visitor.visit(m_true_eval_function);
 }
 
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::gc)
@@ -357,8 +360,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::eval)
         return {};
     }
 
-    auto& caller_frame = vm.call_stack().at(vm.call_stack().size() - 2);
-    TemporaryChange scope_change(vm.call_frame().scope, caller_frame->scope);
+    TemporaryChange scope_change(vm.call_frame().scope, static_cast<ScopeObject*>(&global_object));
 
     auto& interpreter = vm.interpreter();
     return interpreter.execute_statement(global_object, program).value_or(js_undefined());

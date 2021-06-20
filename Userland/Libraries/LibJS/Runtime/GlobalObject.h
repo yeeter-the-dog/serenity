@@ -48,6 +48,8 @@ public:
     JS_ENUMERATE_ITERATOR_PROTOTYPES
 #undef __JS_ENUMERATE
 
+    NativeFunction* true_eval_function() const { return m_true_eval_function; }
+
 protected:
     virtual void visit_edges(Visitor&) override;
 
@@ -91,6 +93,8 @@ private:
     Object* m_##snake_name##_prototype { nullptr };
     JS_ENUMERATE_ITERATOR_PROTOTYPES
 #undef __JS_ENUMERATE
+
+    NativeFunction* m_true_eval_function;
 };
 
 template<typename ConstructorType>

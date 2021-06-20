@@ -38,6 +38,8 @@ struct PropertyDescriptor {
     bool is_generic_descriptor() const { return !is_accessor_descriptor() && !is_data_descriptor(); }
 };
 
+class NativeFunction;
+
 class Object : public Cell {
 public:
     static Object* create(GlobalObject&, Object* prototype);
@@ -93,7 +95,7 @@ public:
     bool define_property_without_transition(const PropertyName&, Value value, PropertyAttributes attributes = default_attributes, bool throw_exceptions = true);
     bool define_accessor(const PropertyName&, Function* getter, Function* setter, PropertyAttributes attributes = default_attributes, bool throw_exceptions = true);
 
-    bool define_native_function(PropertyName const&, AK::Function<Value(VM&, GlobalObject&)>, i32 length = 0, PropertyAttributes attributes = default_attributes);
+    NativeFunction* define_native_function(PropertyName const&, AK::Function<Value(VM&, GlobalObject&)>, i32 length = 0, PropertyAttributes attributes = default_attributes);
     bool define_native_property(PropertyName const&, AK::Function<Value(VM&, GlobalObject&)> getter, AK::Function<void(VM&, GlobalObject&, Value)> setter, PropertyAttributes attributes = default_attributes);
     bool define_native_accessor(PropertyName const&, AK::Function<Value(VM&, GlobalObject&)> getter, AK::Function<Value(VM&, GlobalObject&)> setter, PropertyAttributes attributes = default_attributes);
 

@@ -907,7 +907,7 @@ bool Object::put(const PropertyName& property_name, Value value, Value receiver)
     return put_own_property(string_or_symbol, value, default_attributes, PutOwnPropertyMode::Put);
 }
 
-bool Object::define_native_function(PropertyName const& property_name, AK::Function<Value(VM&, GlobalObject&)> native_function, i32 length, PropertyAttributes attribute)
+NativeFunction* Object::define_native_function(PropertyName const& property_name, AK::Function<Value(VM&, GlobalObject&)> native_function, i32 length, PropertyAttributes attribute)
 {
     auto& vm = this->vm();
     String function_name;
@@ -919,11 +919,13 @@ bool Object::define_native_function(PropertyName const& property_name, AK::Funct
     auto* function = NativeFunction::create(global_object(), function_name, move(native_function));
     function->define_property_without_transition(vm.names.length, Value(length), Attribute::Configurable);
     if (vm.exception())
-        return {};
+        return nullptr;
     function->define_property_without_transition(vm.names.name, js_string(vm.heap(), function_name), Attribute::Configurable);
     if (vm.exception())
-        return {};
-    return define_property(property_name, function, attribute);
+        return nullptr;
+    if (define_property(property_name, function, attribute))
+        return function;
+    return nullptr;
 }
 
 bool Object::define_native_property(PropertyName const& property_name, AK::Function<Value(VM&, GlobalObject&)> getter, AK::Function<void(VM&, GlobalObject&, Value)> setter, PropertyAttributes attribute)

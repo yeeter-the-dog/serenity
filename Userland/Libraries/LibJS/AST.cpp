@@ -14,6 +14,7 @@
 #include <LibCrypto/BigInt/SignedBigInteger.h>
 #include <LibJS/AST.h>
 #include <LibJS/Interpreter.h>
+#include <LibJS/Parser.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/BigInt.h>
@@ -194,6 +195,45 @@ Value CallExpression::execute(Interpreter& interpreter, GlobalObject& global_obj
         }
         return {};
     }
+
+    if (is<Identifier>(*m_callee) &&
+        static_cast<Identifier const&>(*m_callee).string() == "eval" &&
+        &callee.as_function() == global_object.true_eval_function()) {
+        if (m_arguments.size() == 0) {
+            return js_undefined();
+        }
+        auto script_value = m_arguments[0].value->execute(interpreter, global_object);
+        if (vm.exception())
+            return {};
+        for (unsigned i = 1; i < m_arguments.size(); i++) {
+            auto value = m_arguments[i].value->execute(interpreter, global_object);
+            if (vm.exception())
+                return {};
+            if (m_arguments[i].is_spread) {
+                get_iterator_values(global_object, value, [&](Value) {
+                    if (vm.exception())
+                        return IterationDecision::Break;
+                    return IterationDecision::Continue;
+                });
+                if (vm.exception())
+                    return {};
+            }
+        }
+        if (!script_value.is_string()) {
+            return script_value;
+        }
+        auto &script = script_value.as_string();
+        JS::Parser parser { JS::Lexer { script.string() } };
+        auto program = parser.parse_program();
+
+        if (parser.has_errors()) {
+            auto& error = parser.errors()[0];
+            vm.throw_exception<SyntaxError>(global_object, error.to_string());
+            return {};
+        }
+        return interpreter.execute_statement(global_object, program).value_or(js_undefined());
+    }
+
 
     auto& function = callee.as_function();
 
